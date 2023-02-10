@@ -28,6 +28,9 @@ libc {
     dlsym;
     dlvsym;
   }
+  GLIBC_2.38 {
+    dlmem;
+  }
   GLIBC_PRIVATE {
     __libc_dlerror_result;
     _dlerror_run;

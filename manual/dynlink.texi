@@ -209,6 +209,7 @@ This function is a GNU extension.
 @c dladdr1
 @c dlclose
 @c dlerror
+@c dlmem
 @c dlmopen
 @c dlopen
 @c dlsym

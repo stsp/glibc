@@ -957,6 +957,19 @@ _dl_open (const char *file, int mode, const void *caller_dlopen, Lmid_t nsid,
                      __dl_map_object);
 }
 
+void *
+_dl_mem (const unsigned char *buffer, size_t size, int mode,
+	 struct dlmem_args *dlm_args, const void *caller_dlopen,
+	 int argc, char *argv[], char *env[])
+{
+  struct dlmem_fbuf fb = { .buf = buffer, .len = size, .dlm_args = dlm_args };
+  Lmid_t nsid = dlm_args ? dlm_args->nsid : LM_ID_BASE;
+  const char *file = (dlm_args && dlm_args->soname) ? dlm_args->soname : "";
+
+  return do_dl_open (file, &fb, mode, caller_dlopen, nsid, argc, argv, env,
+                     __dl_map_object_from_mem);
+}
+
 void
 _dl_show_scope (struct link_map *l, int from)
 {

@@ -68,6 +68,28 @@ extern void *dlsym (void *__restrict __handle,
 /* Like `dlopen', but request object to be allocated in a new namespace.  */
 extern void *dlmopen (Lmid_t __nsid, const char *__file, int __mode) __THROWNL;
 
+/* Callback for dlmem. */
+typedef void *
+(dlmem_premap_t) (void *mappref, size_t maplength, size_t mapalign,
+	          void *cookie);
+
+struct dlmem_args {
+  /* Optional name to associate with the loaded object. */
+  const char *soname;
+  /* Namespace where to load the object. */
+  Lmid_t nsid;
+  /* dlmem-specific flags. */
+  unsigned int flags;
+  /* Optional premap callback. */
+  dlmem_premap_t *premap;
+  /* Optional argument for premap callback. */
+  void *cookie;
+};
+
+/* Like `dlmopen', but loads shared object from memory buffer.  */
+extern void *dlmem (const unsigned char *buffer, size_t size, int mode,
+		    struct dlmem_args *dlm_args);
+
 /* Find the run-time address in the shared object HANDLE refers to
    of the symbol called NAME with VERSION.  */
 extern void *dlvsym (void *__restrict __handle,

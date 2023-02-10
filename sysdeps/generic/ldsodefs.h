@@ -664,6 +664,9 @@ struct rtld_global_ro
 				   struct link_map *);
   void *(*_dl_open) (const char *file, int mode, const void *caller_dlopen,
 		     Lmid_t nsid, int argc, char *argv[], char *env[]);
+  void *(*_dl_mem) (const unsigned char *buffer, size_t size, int mode,
+		    struct dlmem_args *dlm_args, const void *caller_dlopen,
+		    int argc, char *argv[], char *env[]);
   void (*_dl_close) (void *map);
   /* libdl in a secondary namespace (after dlopen) must use
      _dl_catch_error from the main namespace, so it has to be
@@ -1233,6 +1236,12 @@ extern char *_dl_dst_substitute (struct link_map *l, const char *name,
    the object is already opened, returns its existing map.  */
 extern void *_dl_open (const char *name, int mode, const void *caller,
 		       Lmid_t nsid, int argc, char *argv[], char *env[])
+     attribute_hidden;
+
+/* Open shared object from memory buffer. */
+extern void *_dl_mem (const unsigned char *buffer, size_t size, int mode,
+		      struct dlmem_args *dlm_args, const void *caller,
+		      int argc, char *argv[], char *env[])
      attribute_hidden;
 
 /* Free or queue for freeing scope OLD.  If other threads might be

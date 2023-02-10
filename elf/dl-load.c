@@ -75,6 +75,7 @@ struct filebuf
 #include <dl-machine-reject-phdr.h>
 #include <dl-sysdep-open.h>
 #include <dl-prop.h>
+#include <dl-main.h>
 #include <not-cancel.h>
 
 #include <endian.h>
@@ -2349,6 +2350,178 @@ _dl_map_object (struct link_map *loader, const char *name,
                 int mode, Lmid_t nsid)
 {
   return __dl_map_object (loader, name, NULL, type, trace_mode, mode, nsid);
+}
+
+static void *
+do_memremap (void *addr, size_t length, int prot, int flags,
+             void *arg, off_t offset)
+{
+  const struct dlmem_fbuf *fb = arg;
+  size_t to_copy = 0;
+
+  assert (flags & MAP_FIXED);
+  if (offset < fb->len)
+    {
+      to_copy = length;
+      if (offset + to_copy > fb->len)
+        to_copy = fb->len - offset;
+#ifdef MREMAP_DONTUNMAP
+      void *addr2 = __mremap ((void *) (fb->buf + offset), to_copy, to_copy,
+                              MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP,
+                              addr);
+      /* MREMAP_DONTUNMAP introduced in linux-5.7, but only works for
+         file-based maps since commit a460938 went in 5.13.
+         So have a fall-back. */
+      if (addr2 == MAP_FAILED)
+        memcpy (addr, fb->buf + offset, to_copy);
+#else
+      /* MREMAP_DONTUNMAP is not always available. This is a fall-back. */
+      memcpy (addr, fb->buf + offset, to_copy);
+#endif
+    }
+  /* memset the rest. */
+  if (length > to_copy)
+    memset (addr + to_copy, 0, length - to_copy);
+  if (__mprotect (addr, length, prot) == -1)
+    return MAP_FAILED;
+  return addr;
+}
+
+static void *
+do_dlmem_premap (void *mappref, size_t maplength, size_t mapalign,
+		 void *cookie)
+{
+  struct dlmem_fbuf *fb = cookie;
+  void *ret = MAP_FAILED;
+
+  if (fb->dlm_args && fb->dlm_args->premap)
+    ret = fb->dlm_args->premap (mappref, maplength, mapalign,
+                                fb->dlm_args->cookie);
+  if (ret == MAP_FAILED)
+    ret = (void *) _dl_map_segment ((ElfW(Addr)) mappref, maplength,
+                                    mapalign);
+  return ret;
+}
+
+static ssize_t
+do_pread_memcpy (void *arg, void *buf, size_t count, off_t offset)
+{
+  struct dlmem_fbuf *fb = arg;
+  if (offset >= fb->len)
+    return -1;
+  if (offset + count > fb->len)
+    count = fb->len - offset;
+  if (count)
+    memcpy (buf, fb->buf + offset, count);
+  return count;
+}
+
+static struct link_map *
+___dl_map_object_from_mem (struct link_map *loader, const char *name,
+			   void *private, int type, int trace_mode,
+			   int mode, Lmid_t nsid, struct filebuf *fbp)
+{
+  struct link_map *l;
+  int err;
+  char *realname;
+  /* Initialize to keep the compiler happy.  */
+  const char *errstring = NULL;
+  int errval = 0;
+  struct r_debug *r = _dl_debug_update (nsid);
+  bool make_consistent = false;
+  struct r_file_id id = {};
+
+  assert (nsid >= 0);
+  assert (nsid < GL(dl_nns));
+
+  if (name && *name)
+    {
+      /* Look for this name among those already loaded.  */
+      l = _dl_check_loaded (name, nsid);
+      if (l)
+        return l;
+    }
+
+  /* Will be true if we found a DSO which is of the other ELF class.  */
+  bool found_other_class = false;
+
+  err = do_open_verify (name, private, fbp,
+                        loader ?: GL(dl_ns)[nsid]._ns_loaded,
+                        &found_other_class, false, do_pread_memcpy);
+  if (err)
+    return NULL;
+
+  /* In case the LOADER information has only been provided to get to
+     the appropriate RUNPATH/RPATH information we do not need it
+     anymore.  */
+  if (mode & __RTLD_CALLMAP)
+    loader = NULL;
+
+  if (mode & RTLD_NOLOAD)
+    {
+      /* We are not supposed to load the object unless it is already
+	 loaded.  So return now.  */
+      return NULL;
+    }
+
+  /* Print debugging message.  */
+  if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_FILES))
+    _dl_debug_printf ("dlmem [%lu];  generating link map\n", nsid);
+
+  /* _dl_new_object() treats "" separately and doesn't free it. */
+  realname = *name ? __strdup (name) : (char *) "";
+  /* Enter the new object in the list of loaded objects.  */
+  l = _dl_new_object (realname, name, type, loader, mode, nsid);
+  if (__glibc_unlikely (l == NULL))
+    {
+      errstring = N_("cannot create shared object descriptor");
+      goto lose_errno;
+    }
+
+  void *stack_end = __libc_stack_end;
+  if (_dl_map_object_1 (l, private, fbp, mode, loader, &stack_end, &errval,
+                        &errstring, do_memremap, do_dlmem_premap))
+    goto lose;
+
+  _dl_map_object_2 (l, mode, id, NULL, nsid);
+  return l;
+
+lose_errno:
+  errval = errno;
+lose:
+  if (l != NULL && l->l_map_start != 0)
+    _dl_unmap_segments (l);
+  if (l != NULL && l->l_origin != (char *) -1l)
+    free ((char *) l->l_origin);
+  if (l != NULL && !l->l_libname->dont_free)
+    free (l->l_libname);
+  if (l != NULL && l->l_phdr_allocated)
+    free ((void *) l->l_phdr);
+  free (l);
+
+  if (make_consistent && r != NULL)
+    {
+      r->r_state = RT_CONSISTENT;
+      _dl_debug_state ();
+      LIBC_PROBE (map_failed, 2, nsid, r);
+    }
+
+  _dl_signal_error (errval, NULL, NULL, errstring);
+  return NULL;
+}
+
+struct link_map *
+__dl_map_object_from_mem (struct link_map *loader, const char *name,
+			  void *private, int type, int trace_mode,
+			  int mode, Lmid_t nsid)
+{
+  struct link_map *ret;
+  struct filebuf fb = {};
+
+  ret = ___dl_map_object_from_mem (loader, name, private, type, trace_mode,
+                                  mode, nsid, &fb);
+  filebuf_done (&fb);
+  return ret;
 }
 
 struct add_path_state

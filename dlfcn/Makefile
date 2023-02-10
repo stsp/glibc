@@ -28,6 +28,7 @@ routines = \
   dlclose \
   dlerror \
   dlinfo \
+  dlmem \
   dlmopen \
   dlopen \
   dlsym \
@@ -51,7 +52,8 @@ endif
 ifeq (yes,$(build-shared))
 tests = glrefmain failtest tst-dladdr default errmsg1 tstcxaatexit \
 	bug-dlopen1 bug-dlsym1 tst-dlinfo bug-atexit1 bug-atexit2 \
-	bug-atexit3 tstatexit bug-dl-leaf tst-rec-dlopen
+	bug-atexit3 tstatexit bug-dl-leaf tst-rec-dlopen tst-dlmem-extfns
+CPPFLAGS-tst-dlmem-extfns.c += -DBUILDDIR=\"$(objpfx)\"
 endif
 modules-names = glreflib1 glreflib2 glreflib3 failtestmod defaultmod1 \
 		defaultmod2 errmsg1mod modatexit modcxaatexit \
@@ -102,6 +104,12 @@ $(objpfx)glrefmain.out: $(objpfx)glrefmain \
 $(objpfx)failtest.out: $(objpfx)failtestmod.so
 
 $(objpfx)tst-dladdr.out: $(objpfx)glreflib1.so
+# Create fancy container file with solib within.
+$(objpfx)glreflib1.img: $(objpfx)glreflib1.so
+	dd if=/dev/urandom bs=512 count=1 >$@
+	cat $^ >>$@
+	dd if=/dev/urandom bs=512 count=1 >>$@
+$(objpfx)tst-dlmem-extfns.out: $(objpfx)glreflib1.so $(objpfx)glreflib1.img
 
 $(objpfx)tst-dlinfo.out: $(objpfx)glreflib3.so
 LDFLAGS-glreflib3.so = -Wl,-rpath,:

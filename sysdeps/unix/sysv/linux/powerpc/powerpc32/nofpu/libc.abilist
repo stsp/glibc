@@ -2850,6 +2850,7 @@ GLIBC_2.38 __nldbl___isoc23_vsscanf F
 GLIBC_2.38 __nldbl___isoc23_vswscanf F
 GLIBC_2.38 __nldbl___isoc23_vwscanf F
 GLIBC_2.38 __nldbl___isoc23_wscanf F
+GLIBC_2.38 dlmem F
 GLIBC_2.4 _IO_fprintf F
 GLIBC_2.4 _IO_printf F
 GLIBC_2.4 _IO_sprintf F

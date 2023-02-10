@@ -106,6 +106,9 @@ _dl_postprocess_loadcmd (struct link_map *l, const ElfW(Ehdr) *header,
                                       - c->mapoff);
 }
 
+static void *
+do_mmap (void *addr, size_t length, int prot, int flags,
+         void *arg, off_t offset);
 
 /* This is a subroutine of _dl_map_object_from_fd.  It is responsible
    for filling in several fields in *L: l_map_start, l_map_end, l_addr,

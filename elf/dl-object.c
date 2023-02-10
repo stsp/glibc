@@ -122,7 +122,10 @@ _dl_new_object (char *realname, const char *libname, int type,
 #endif
     new->l_name = realname;
   else
-    new->l_name = (char *) newname->name + libname_len - 1;
+    /* When realname="", it is not allocated and points to the constant
+       string. Constness is dropped by an explicit cast. :(
+       So strdup() it here. */
+    new->l_name = __strdup ("");
 
   new->l_type = type;
   /* If we set the bit now since we know it is never used we avoid
