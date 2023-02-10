@@ -52,8 +52,10 @@ endif
 ifeq (yes,$(build-shared))
 tests = glrefmain failtest tst-dladdr default errmsg1 tstcxaatexit \
 	bug-dlopen1 bug-dlsym1 tst-dlinfo bug-atexit1 bug-atexit2 \
-	bug-atexit3 tstatexit bug-dl-leaf tst-rec-dlopen tst-dlmem-extfns
+	bug-atexit3 tstatexit bug-dl-leaf tst-rec-dlopen tst-dlmem-extfns \
+	tst-dlmem-shm
 CPPFLAGS-tst-dlmem-extfns.c += -DBUILDDIR=\"$(objpfx)\"
+CPPFLAGS-tst-dlmem-shm.c += -DBUILDDIR=\"$(objpfx)\"
 endif
 modules-names = glreflib1 glreflib2 glreflib3 failtestmod defaultmod1 \
 		defaultmod2 errmsg1mod modatexit modcxaatexit \
@@ -110,6 +112,7 @@ $(objpfx)glreflib1.img: $(objpfx)glreflib1.so
 	cat $^ >>$@
 	dd if=/dev/urandom bs=512 count=1 >>$@
 $(objpfx)tst-dlmem-extfns.out: $(objpfx)glreflib1.so $(objpfx)glreflib1.img
+$(objpfx)tst-dlmem-shm.out: $(objpfx)glreflib1.so
 
 $(objpfx)tst-dlinfo.out: $(objpfx)glreflib3.so
 LDFLAGS-glreflib3.so = -Wl,-rpath,:

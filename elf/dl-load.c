@@ -2353,6 +2353,31 @@ _dl_map_object (struct link_map *loader, const char *name,
 }
 
 static void *
+do_mmapcpy (void *addr, size_t length, int prot, int flags,
+            void *arg, off_t offset)
+{
+  const struct dlmem_fbuf *fb = arg;
+  size_t to_copy = 0;
+
+  assert (flags & MAP_FIXED);
+  assert ((flags & MAP_ANONYMOUS) || fb);
+
+  if (!(flags & MAP_ANONYMOUS) && offset < fb->len)
+    {
+      to_copy = length;
+      if (offset + to_copy > fb->len)
+        to_copy = fb->len - offset;
+      memcpy (addr, fb->buf + offset, to_copy);
+    }
+  /* memset the rest. */
+  if (length > to_copy)
+    memset (addr + to_copy, 0, length - to_copy);
+  if (__mprotect (addr, length, prot) == -1)
+    return MAP_FAILED;
+  return addr;
+}
+
+static void *
 do_memremap (void *addr, size_t length, int prot, int flags,
              void *arg, off_t offset)
 {
@@ -2360,6 +2385,11 @@ do_memremap (void *addr, size_t length, int prot, int flags,
   size_t to_copy = 0;
 
   assert (flags & MAP_FIXED);
+  assert ((flags & MAP_ANONYMOUS) || fb);
+
+  if (flags & MAP_ANONYMOUS)
+    return __mmap (addr, length, prot, flags, -1, 0);
+
   if (offset < fb->len)
     {
       to_copy = length;
@@ -2430,6 +2460,10 @@ ___dl_map_object_from_mem (struct link_map *loader, const char *name,
   struct r_debug *r = _dl_debug_update (nsid);
   bool make_consistent = false;
   struct r_file_id id = {};
+  const struct dlmem_fbuf *fb = private;
+  unsigned dlmem_flags = fb->dlm_args ? fb->dlm_args->flags : 0;
+  __typeof (do_mmap) *m_map = (dlmem_flags & DLMEM_DONTREPLACE)
+                             ? do_mmapcpy : do_memremap;
 
   assert (nsid >= 0);
   assert (nsid < GL(dl_nns));
@@ -2480,7 +2514,7 @@ ___dl_map_object_from_mem (struct link_map *loader, const char *name,
 
   void *stack_end = __libc_stack_end;
   if (_dl_map_object_1 (l, private, fbp, mode, loader, &stack_end, &errval,
-                        &errstring, do_memremap, do_dlmem_premap))
+                        &errstring, m_map, do_dlmem_premap))
     goto lose;
 
   _dl_map_object_2 (l, mode, id, NULL, nsid);

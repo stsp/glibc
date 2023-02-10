@@ -73,6 +73,10 @@ typedef void *
 (dlmem_premap_t) (void *mappref, size_t maplength, size_t mapalign,
 	          void *cookie);
 
+/* Do not replace mapping created by premap callback.
+   dlmem() will then use memcpy(). */
+#define DLMEM_DONTREPLACE 1
+
 struct dlmem_args {
   /* Optional name to associate with the loaded object. */
   const char *soname;

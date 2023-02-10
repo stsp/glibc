@@ -22,3 +22,5 @@ ref1 (void)
 {
   return 42;
 }
+
+int bar = 35;

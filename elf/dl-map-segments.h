@@ -187,9 +187,9 @@ _dl_map_segments (struct link_map *l, void *fd,
             {
               /* Map the remaining zero pages in from the zero fill FD.  */
               caddr_t mapat;
-              mapat = __mmap ((caddr_t) zeropage, zeroend - zeropage,
+              mapat = m_map ((caddr_t) zeropage, zeroend - zeropage,
                               c->prot, MAP_ANON|MAP_PRIVATE|MAP_FIXED,
-                              -1, 0);
+                              NULL, 0);
               if (__glibc_unlikely (mapat == MAP_FAILED))
                 return DL_MAP_SEGMENTS_ERROR_MAP_ZERO_FILL;
             }
