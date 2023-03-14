@@ -22,18 +22,22 @@
 /* Map a segment and align it properly.  */
 
 static __always_inline ElfW(Addr)
-_dl_map_segment (const struct loadcmd *c, ElfW(Addr) mappref,
-		 const size_t maplength, int fd)
+_dl_map_segment (ElfW(Addr) mappref, size_t maplength, size_t mapalign)
 {
-  if (__glibc_likely (c->mapalign <= GLRO(dl_pagesize)))
-    return (ElfW(Addr)) __mmap ((void *) mappref, maplength, c->prot,
-				MAP_COPY|MAP_FILE, fd, c->mapoff);
+  int err;
+  /* MAP_COPY is a special flag combination for solibs. */
+  unsigned int map_flags = MAP_ANONYMOUS | MAP_COPY;
+  unsigned int prot = PROT_READ | PROT_WRITE;
+
+  if (__glibc_likely (mapalign <= GLRO(dl_pagesize)))
+    return (ElfW(Addr)) __mmap ((void *) mappref, maplength, prot,
+				map_flags, -1, 0);
 
   /* If the segment alignment > the page size, allocate enough space to
      ensure that the segment can be properly aligned.  */
-  ElfW(Addr) maplen = (maplength >= c->mapalign
-		       ? (maplength + c->mapalign)
-		       : (2 * c->mapalign));
+  ElfW(Addr) maplen = (maplength >= mapalign
+		       ? (maplength + mapalign)
+		       : (2 * mapalign));
   ElfW(Addr) map_start = (ElfW(Addr)) __mmap ((void *) mappref, maplen,
 					      PROT_NONE,
 					      MAP_ANONYMOUS|MAP_PRIVATE,
@@ -41,25 +45,23 @@ _dl_map_segment (const struct loadcmd *c, ElfW(Addr) mappref,
   if (__glibc_unlikely ((void *) map_start == MAP_FAILED))
     return map_start;
 
-  ElfW(Addr) map_start_aligned = ALIGN_UP (map_start, c->mapalign);
-  map_start_aligned = (ElfW(Addr)) __mmap ((void *) map_start_aligned,
-					   maplength, c->prot,
-					   MAP_COPY|MAP_FILE|MAP_FIXED,
-					   fd, c->mapoff);
-  if (__glibc_unlikely ((void *) map_start_aligned == MAP_FAILED))
-    __munmap ((void *) map_start, maplen);
-  else
+  ElfW(Addr) map_start_aligned = ALIGN_UP (map_start, mapalign);
+  err = __mprotect ((void *) map_start_aligned, maplength, prot);
+  if (__glibc_unlikely (err))
     {
-      /* Unmap the unused regions.  */
-      ElfW(Addr) delta = map_start_aligned - map_start;
-      if (delta)
-	__munmap ((void *) map_start, delta);
-      ElfW(Addr) map_end = map_start_aligned + maplength;
-      map_end = ALIGN_UP (map_end, GLRO(dl_pagesize));
-      delta = map_start + maplen - map_end;
-      if (delta)
-	__munmap ((void *) map_end, delta);
+      __munmap ((void *) map_start, maplen);
+      return (ElfW(Addr)) MAP_FAILED;
     }
+
+  /* Unmap the unused regions.  */
+  ElfW(Addr) delta = map_start_aligned - map_start;
+  if (delta)
+    __munmap ((void *) map_start, delta);
+  ElfW(Addr) map_end = map_start_aligned + maplength;
+  map_end = ALIGN_UP (map_end, GLRO(dl_pagesize));
+  delta = map_start + maplen - map_end;
+  if (delta)
+    __munmap ((void *) map_end, delta);
 
   return map_start_aligned;
 }
@@ -98,7 +100,7 @@ _dl_map_segments (struct link_map *l, int fd,
            - MAP_BASE_ADDR (l));
 
       /* Remember which part of the address space this object uses.  */
-      l->l_map_start = _dl_map_segment (c, mappref, maplength, fd);
+      l->l_map_start = _dl_map_segment (mappref, maplength, c->mapalign);
       if (__glibc_unlikely ((void *) l->l_map_start == MAP_FAILED))
         return DL_MAP_SEGMENTS_ERROR_MAP_SEGMENT;
 
@@ -123,14 +125,14 @@ _dl_map_segments (struct link_map *l, int fd,
         }
 
       l->l_contiguous = 1;
-
-      goto postmap;
     }
-
-  /* Remember which part of the address space this object uses.  */
-  l->l_map_start = c->mapstart + l->l_addr;
-  l->l_map_end = l->l_map_start + maplength;
-  l->l_contiguous = !has_holes;
+  else
+    {
+      /* Remember which part of the address space this object uses.  */
+      l->l_map_start = c->mapstart + l->l_addr;
+      l->l_map_end = l->l_map_start + maplength;
+      l->l_contiguous = !has_holes;
+    }
 
   while (c < &loadcmds[nloadcmds])
     {
@@ -143,7 +145,6 @@ _dl_map_segments (struct link_map *l, int fd,
               == MAP_FAILED))
         return DL_MAP_SEGMENTS_ERROR_MAP_SEGMENT;
 
-    postmap:
       _dl_postprocess_loadcmd (l, header, c);
 
       if (c->allocend > c->dataend)
