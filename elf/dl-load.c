@@ -929,136 +929,45 @@ _dl_process_pt_gnu_property (struct link_map *l, int fd, const ElfW(Phdr) *ph)
     }
 }
 
-
-/* Map in the shared object NAME, actually located in REALNAME, and already
-   opened on FD.  */
-
-#ifndef EXTERNAL_MAP_FROM_FD
-static
-#endif
-struct link_map *
-_dl_map_object_from_fd (const char *name, const char *origname, int fd,
-			struct filebuf *fbp, char *realname,
-			struct link_map *loader, int l_type, int mode,
-			void **stack_endp, Lmid_t nsid)
+static void
+_dl_process_phdrs (struct link_map *l, int fd)
 {
-  struct link_map *l = NULL;
+  const ElfW(Phdr) *ph;
+
+  /* Process program headers again after load segments are mapped in
+     case processing requires accessing those segments.  Scan program
+     headers backward so that PT_NOTE can be skipped if PT_GNU_PROPERTY
+     exits.  */
+  for (ph = &l->l_phdr[l->l_phnum]; ph != l->l_phdr; --ph)
+    switch (ph[-1].p_type)
+      {
+      case PT_NOTE:
+	_dl_process_pt_note (l, fd, &ph[-1]);
+	break;
+      case PT_GNU_PROPERTY:
+	_dl_process_pt_gnu_property (l, fd, &ph[-1]);
+	break;
+      }
+}
+
+static int
+_dl_map_object_1 (struct link_map *l, int fd,
+                  struct filebuf *fbp,
+                  int mode, struct link_map *loader,
+                  void **stack_endp, int *errval_p,
+                  const char **errstring_p)
+{
   const ElfW(Ehdr) *header;
   const ElfW(Phdr) *phdr;
   const ElfW(Phdr) *ph;
   size_t maplength;
   int type;
   /* Initialize to keep the compiler happy.  */
-  const char *errstring = NULL;
-  int errval = 0;
-
-  /* Get file information.  To match the kernel behavior, do not fill
-     in this information for the executable in case of an explicit
-     loader invocation.  */
-  struct r_file_id id;
-  if (mode & __RTLD_OPENEXEC)
-    {
-      assert (nsid == LM_ID_BASE);
-      memset (&id, 0, sizeof (id));
-    }
-  else
-    {
-      if (__glibc_unlikely (!_dl_get_file_id (fd, &id)))
-	{
-	  errstring = N_("cannot stat shared object");
-	lose_errno:
-	  errval = errno;
-	lose:
-	  /* The file might already be closed.  */
-	  if (fd != -1)
-	    __close_nocancel (fd);
-	  if (l != NULL && l->l_map_start != 0)
-	    _dl_unmap_segments (l);
-	  if (l != NULL && l->l_origin != (char *) -1l)
-	    free ((char *) l->l_origin);
-	  if (l != NULL && !l->l_libname->dont_free)
-	    free (l->l_libname);
-	  if (l != NULL && l->l_phdr_allocated)
-	    free ((void *) l->l_phdr);
-	  free (l);
-	  free (realname);
-	  _dl_signal_error (errval, name, NULL, errstring);
-	}
-
-      /* Look again to see if the real name matched another already loaded.  */
-      for (l = GL(dl_ns)[nsid]._ns_loaded; l != NULL; l = l->l_next)
-	if (!l->l_removed && _dl_file_id_match_p (&l->l_file_id, &id))
-	  {
-	    /* The object is already loaded.
-	       Just bump its reference count and return it.  */
-	    __close_nocancel (fd);
-
-	    /* If the name is not in the list of names for this object add
-	       it.  */
-	    free (realname);
-	    add_name_to_object (l, name);
-
-	    return l;
-	  }
-    }
-
-#ifdef SHARED
-  /* When loading into a namespace other than the base one we must
-     avoid loading ld.so since there can only be one copy.  Ever.  */
-  if (__glibc_unlikely (nsid != LM_ID_BASE)
-      && (_dl_file_id_match_p (&id, &GL(dl_rtld_map).l_file_id)
-	  || _dl_name_match_p (name, &GL(dl_rtld_map))))
-    {
-      /* This is indeed ld.so.  Create a new link_map which refers to
-	 the real one for almost everything.  */
-      l = _dl_new_object (realname, name, l_type, loader, mode, nsid);
-      if (l == NULL)
-	goto fail_new;
-
-      /* Refer to the real descriptor.  */
-      l->l_real = &GL(dl_rtld_map);
-
-      /* Copy l_addr and l_ld to avoid a GDB warning with dlmopen().  */
-      l->l_addr = l->l_real->l_addr;
-      l->l_ld = l->l_real->l_ld;
-
-      /* No need to bump the refcount of the real object, ld.so will
-	 never be unloaded.  */
-      __close_nocancel (fd);
-
-      /* Add the map for the mirrored object to the object list.  */
-      _dl_add_to_namespace_list (l, nsid);
-
-      return l;
-    }
-#endif
-
-  if (mode & RTLD_NOLOAD)
-    {
-      /* We are not supposed to load the object unless it is already
-	 loaded.  So return now.  */
-      free (realname);
-      __close_nocancel (fd);
-      return NULL;
-    }
-
-  /* Print debugging message.  */
-  if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_FILES))
-    _dl_debug_printf ("file=%s [%lu];  generating link map\n", name, nsid);
+#define errstring (*errstring_p)
+#define errval (*errval_p)
 
   /* This is the ELF header.  We read it in `open_verify'.  */
   header = (void *) fbp->buf;
-
-  /* Enter the new object in the list of loaded objects.  */
-  l = _dl_new_object (realname, name, l_type, loader, mode, nsid);
-  if (__glibc_unlikely (l == NULL))
-    {
-#ifdef SHARED
-    fail_new:
-#endif
-      errstring = N_("cannot create shared object descriptor");
-      goto lose_errno;
-    }
 
   /* Extract the remaining details we need from the ELF header
      and then read in the program header table.  */
@@ -1083,7 +992,7 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
    /* On most platforms presume that PT_GNU_STACK is absent and the stack is
     * executable.  Other platforms default to a nonexecutable stack and don't
     * need PT_GNU_STACK to do so.  */
-   unsigned int stack_flags = DEFAULT_STACK_PERMS;
+  unsigned int stack_flags = DEFAULT_STACK_PERMS;
 
   {
     /* Scan the program header table, collecting its load commands.  */
@@ -1361,30 +1270,6 @@ cannot enable executable stack as shared object requires");
   if (l->l_tls_initimage != NULL)
     l->l_tls_initimage = (char *) l->l_tls_initimage + l->l_addr;
 
-  /* Process program headers again after load segments are mapped in
-     case processing requires accessing those segments.  Scan program
-     headers backward so that PT_NOTE can be skipped if PT_GNU_PROPERTY
-     exits.  */
-  for (ph = &l->l_phdr[l->l_phnum]; ph != l->l_phdr; --ph)
-    switch (ph[-1].p_type)
-      {
-      case PT_NOTE:
-	_dl_process_pt_note (l, fd, &ph[-1]);
-	break;
-      case PT_GNU_PROPERTY:
-	_dl_process_pt_gnu_property (l, fd, &ph[-1]);
-	break;
-      }
-
-  /* We are done mapping in the file.  We no longer need the descriptor.  */
-  if (__glibc_unlikely (__close_nocancel (fd) != 0))
-    {
-      errstring = N_("cannot close file descriptor");
-      goto lose_errno;
-    }
-  /* Signal that we closed the file.  */
-  fd = -1;
-
   /* Failures before this point are handled locally via lose.
      There are no more failures in this function until return,
      to change that the cleanup handling needs to be updated.  */
@@ -1409,6 +1294,22 @@ cannot enable executable stack as shared object requires");
 			   (unsigned long int) l->l_phdr,
 			   (int) sizeof (void *) * 2, l->l_phnum);
 
+  return 0;
+
+lose_errno:
+  errval = errno;
+lose:
+  return -1;
+
+#undef errval
+#undef errstring
+}
+
+static void
+_dl_map_object_2 (struct link_map *l, int mode,
+                  struct r_file_id id, const char *origname,
+                  Lmid_t nsid)
+{
   /* Set up the symbol hash table.  */
   _dl_setup_hash (l);
 
@@ -1510,10 +1411,150 @@ cannot enable executable stack as shared object requires");
   if (!GL(dl_ns)[l->l_ns]._ns_loaded->l_auditing)
     _dl_audit_objopen (l, nsid);
 #endif
+}
 
+/* Map in the shared object NAME, actually located in REALNAME, and already
+   opened on FD.  */
+
+#ifndef EXTERNAL_MAP_FROM_FD
+static
+#endif
+struct link_map *
+_dl_map_object_from_fd (const char *name, const char *origname, int fd,
+			struct filebuf *fbp, char *realname,
+			struct link_map *loader, int l_type, int mode,
+			void **stack_endp, Lmid_t nsid)
+{
+  struct link_map *l = NULL;
+  /* Initialize to keep the compiler happy.  */
+  const char *errstring = NULL;
+  int errval = 0;
+
+  /* Get file information.  To match the kernel behavior, do not fill
+     in this information for the executable in case of an explicit
+     loader invocation.  */
+  struct r_file_id id;
+  if (mode & __RTLD_OPENEXEC)
+    {
+      assert (nsid == LM_ID_BASE);
+      memset (&id, 0, sizeof (id));
+    }
+  else
+    {
+      if (__glibc_unlikely (!_dl_get_file_id (fd, &id)))
+	{
+	  errstring = N_("cannot stat shared object");
+	lose_errno:
+	  errval = errno;
+	lose:
+	  /* The file might already be closed.  */
+	  if (fd != -1)
+	    __close_nocancel (fd);
+	  if (l != NULL && l->l_map_start != 0)
+	    _dl_unmap_segments (l);
+	  if (l != NULL && l->l_origin != (char *) -1l)
+	    free ((char *) l->l_origin);
+	  if (l != NULL && !l->l_libname->dont_free)
+	    free (l->l_libname);
+	  if (l != NULL && l->l_phdr_allocated)
+	    free ((void *) l->l_phdr);
+	  free (l);
+	  free (realname);
+
+	  _dl_signal_error (errval, name, NULL, errstring);
+	}
+
+      /* Look again to see if the real name matched another already loaded.  */
+      for (l = GL(dl_ns)[nsid]._ns_loaded; l != NULL; l = l->l_next)
+	if (!l->l_removed && _dl_file_id_match_p (&l->l_file_id, &id))
+	  {
+	    /* The object is already loaded.
+	       Just bump its reference count and return it.  */
+	    __close_nocancel (fd);
+
+	    /* If the name is not in the list of names for this object add
+	       it.  */
+	    free (realname);
+	    add_name_to_object (l, name);
+
+	    return l;
+	  }
+    }
+
+#ifdef SHARED
+  /* When loading into a namespace other than the base one we must
+     avoid loading ld.so since there can only be one copy.  Ever.  */
+  if (__glibc_unlikely (nsid != LM_ID_BASE)
+      && (_dl_file_id_match_p (&id, &GL(dl_rtld_map).l_file_id)
+	  || _dl_name_match_p (name, &GL(dl_rtld_map))))
+    {
+      /* This is indeed ld.so.  Create a new link_map which refers to
+	 the real one for almost everything.  */
+      l = _dl_new_object (realname, name, l_type, loader, mode, nsid);
+      if (l == NULL)
+	goto fail_new;
+
+      /* Refer to the real descriptor.  */
+      l->l_real = &GL(dl_rtld_map);
+
+      /* Copy l_addr and l_ld to avoid a GDB warning with dlmopen().  */
+      l->l_addr = l->l_real->l_addr;
+      l->l_ld = l->l_real->l_ld;
+
+      /* No need to bump the refcount of the real object, ld.so will
+	 never be unloaded.  */
+      __close_nocancel (fd);
+
+      /* Add the map for the mirrored object to the object list.  */
+      _dl_add_to_namespace_list (l, nsid);
+
+      return l;
+    }
+#endif
+
+  if (mode & RTLD_NOLOAD)
+    {
+      /* We are not supposed to load the object unless it is already
+	 loaded.  So return now.  */
+      free (realname);
+      __close_nocancel (fd);
+      return NULL;
+    }
+
+  /* Print debugging message.  */
+  if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_FILES))
+    _dl_debug_printf ("file=%s [%lu];  generating link map\n", name, nsid);
+
+  /* Enter the new object in the list of loaded objects.  */
+  l = _dl_new_object (realname, name, l_type, loader, mode, nsid);
+  if (__glibc_unlikely (l == NULL))
+    {
+#ifdef SHARED
+    fail_new:
+#endif
+      errstring = N_("cannot create shared object descriptor");
+      goto lose_errno;
+    }
+
+  if (_dl_map_object_1 (l, fd, fbp, mode, loader, stack_endp, &errval,
+                        &errstring))
+    goto lose;
+
+  _dl_process_phdrs (l, fd);
+
+  /* We are done mapping in the file.  We no longer need the descriptor.  */
+  if (__glibc_unlikely (__close_nocancel (fd) != 0))
+    {
+      errstring = N_("cannot close file descriptor");
+      goto lose_errno;
+    }
+  /* Signal that we closed the file.  */
+  fd = -1;
+
+  _dl_map_object_2 (l, mode, id, origname, nsid);
   return l;
 }
-
+
 /* Print search path.  */
 static void
 print_search_path (struct r_search_path_elem **list,
