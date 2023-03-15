@@ -1596,19 +1596,11 @@ print_search_path (struct r_search_path_elem **list,
   else
     _dl_debug_printf_c ("\t\t(%s)\n", what);
 }
-
-/* Open a file and verify it is an ELF file for this architecture.  We
-   ignore only ELF files for other architectures.  Non-ELF files and
-   ELF files with different header information cause fatal errors since
-   this could mean there is something wrong in the installation and the
-   user might want to know about this.
 
-   If FD is not -1, then the file is already open and FD refers to it.
-   In that case, FD is consumed for both successful and error returns.  */
 static int
-open_verify (const char *name, int fd,
-             struct filebuf *fbp, struct link_map *loader,
-	     int whatcode, int mode, bool *found_other_class, bool free_name)
+do_open_verify (const char *name, int fd,
+                struct filebuf *fbp, struct link_map *loader,
+                bool *found_other_class, bool free_name)
 {
   /* This is the expected ELF header.  */
 #define ELF32_CLASS ELFCLASS32
@@ -1635,7 +1627,170 @@ open_verify (const char *name, int fd,
   /* Initialize it to make the compiler happy.  */
   const char *errstring = NULL;
   int errval = 0;
+  ElfW(Ehdr) *ehdr;
+  ElfW(Phdr) *phdr;
+  size_t maplength;
 
+  /* We successfully opened the file.  Now verify it is a file
+   we can use.  */
+  __set_errno (0);
+  fbp->len = 0;
+  assert (sizeof (fbp->buf) > sizeof (ElfW(Ehdr)));
+  /* Read in the header.  */
+  do
+    {
+      ssize_t retlen = __read_nocancel (fd, fbp->buf + fbp->len,
+					sizeof (fbp->buf) - fbp->len);
+      if (retlen <= 0)
+        break;
+      fbp->len += retlen;
+    }
+  while (__glibc_unlikely (fbp->len < sizeof (ElfW(Ehdr))));
+
+  /* This is where the ELF header is loaded.  */
+  ehdr = (ElfW(Ehdr) *) fbp->buf;
+
+  /* Now run the tests.  */
+  if (__glibc_unlikely (fbp->len < (ssize_t) sizeof (ElfW(Ehdr))))
+    {
+      errval = errno;
+      errstring = (errval == 0
+	       ? N_("file too short") : N_("cannot read file data"));
+    lose:
+      if (free_name)
+        {
+          char *realname = (char *) name;
+          name = strdupa (realname);
+          free (realname);
+        }
+      _dl_signal_error (errval, name, NULL, errstring);
+      return -1;
+    }
+
+  /* See whether the ELF header is what we expect.  */
+  if (__glibc_unlikely (! VALID_ELF_HEADER (ehdr->e_ident, expected,
+					    EI_ABIVERSION)
+			|| !VALID_ELF_ABIVERSION (ehdr->e_ident[EI_OSABI],
+						  ehdr->e_ident[EI_ABIVERSION])
+			|| memcmp (&ehdr->e_ident[EI_PAD],
+				   &expected[EI_PAD],
+				    EI_NIDENT - EI_PAD) != 0))
+    {
+      /* Something is wrong.  */
+      const Elf32_Word *magp = (const void *) ehdr->e_ident;
+      if (*magp !=
+#if BYTE_ORDER == LITTLE_ENDIAN
+          ((ELFMAG0 << (EI_MAG0 * 8))
+           | (ELFMAG1 << (EI_MAG1 * 8))
+           | (ELFMAG2 << (EI_MAG2 * 8))
+           | (ELFMAG3 << (EI_MAG3 * 8)))
+#else
+          ((ELFMAG0 << (EI_MAG3 * 8))
+           | (ELFMAG1 << (EI_MAG2 * 8))
+           | (ELFMAG2 << (EI_MAG1 * 8))
+           | (ELFMAG3 << (EI_MAG0 * 8)))
+#endif
+          )
+        errstring = N_("invalid ELF header");
+
+      else if (ehdr->e_ident[EI_CLASS] != ELFW(CLASS))
+        {
+          /* This is not a fatal error.  On architectures where
+             32-bit and 64-bit binaries can be run this might
+             happen.  */
+          *found_other_class = true;
+          __set_errno (ENOENT);
+          return -1;
+        }
+      else if (ehdr->e_ident[EI_DATA] != byteorder)
+        {
+          if (BYTE_ORDER == BIG_ENDIAN)
+            errstring = N_("ELF file data encoding not big-endian");
+          else
+            errstring = N_("ELF file data encoding not little-endian");
+        }
+      else if (ehdr->e_ident[EI_VERSION] != EV_CURRENT)
+        errstring
+          = N_("ELF file version ident does not match current one");
+      /* XXX We should be able so set system specific versions which are
+         allowed here.  */
+      else if (!VALID_ELF_OSABI (ehdr->e_ident[EI_OSABI]))
+        errstring = N_("ELF file OS ABI invalid");
+      else if (!VALID_ELF_ABIVERSION (ehdr->e_ident[EI_OSABI],
+				      ehdr->e_ident[EI_ABIVERSION]))
+        errstring = N_("ELF file ABI version invalid");
+      else if (memcmp (&ehdr->e_ident[EI_PAD], &expected[EI_PAD],
+		       EI_NIDENT - EI_PAD) != 0)
+        errstring = N_("nonzero padding in e_ident");
+      else
+        /* Otherwise we don't know what went wrong.  */
+        errstring = N_("internal error");
+
+      goto lose;
+    }
+
+  if (__glibc_unlikely (ehdr->e_version != EV_CURRENT))
+    {
+      errstring = N_("ELF file version does not match current one");
+      goto lose;
+    }
+  if (! __glibc_likely (elf_machine_matches_host (ehdr)))
+    {
+      __set_errno (ENOENT);
+      return -1;
+    }
+  else if (__glibc_unlikely (ehdr->e_type != ET_DYN
+				 && ehdr->e_type != ET_EXEC))
+    {
+      errstring = N_("only ET_DYN and ET_EXEC can be loaded");
+      goto lose;
+    }
+  else if (__glibc_unlikely (ehdr->e_phentsize != sizeof (ElfW(Phdr))))
+    {
+      errstring = N_("ELF file's phentsize not the expected size");
+      goto lose;
+    }
+
+  maplength = ehdr->e_phnum * sizeof (ElfW(Phdr));
+  if (ehdr->e_phoff + maplength <= (size_t) fbp->len)
+    phdr = (void *) (fbp->buf + ehdr->e_phoff);
+  else
+    {
+      phdr = alloca (maplength);
+      if ((size_t) __pread64_nocancel (fd, (void *) phdr, maplength,
+					   ehdr->e_phoff) != maplength)
+        {
+          errval = errno;
+          errstring = N_("cannot read file data");
+          goto lose;
+        }
+    }
+
+  if (__glibc_unlikely (elf_machine_reject_phdr_p
+		       (phdr, ehdr->e_phnum, fbp->buf, fbp->len,
+			loader, -1)))
+    {
+      __set_errno (ENOENT);
+      return -1;
+    }
+
+  return 0;
+}
+
+
+/* Open a file and verify it is an ELF file for this architecture.  We
+   ignore only ELF files for other architectures.  Non-ELF files and
+   ELF files with different header information cause fatal errors since
+   this could mean there is something wrong in the installation and the
+   user might want to know about this.
+
+   If FD is not -1, then the file is already open and FD refers to it.
+   In that case, FD is consumed for both successful and error returns.  */
+static int
+open_verify (const char *name, int fd,
+             struct filebuf *fbp, struct link_map *loader,
+	     int whatcode, int mode, bool *found_other_class, bool free_name)
+{
 #ifdef SHARED
   /* Give the auditing libraries a chance.  */
   if (__glibc_unlikely (GLRO(dl_naudit) > 0))
@@ -1661,161 +1816,19 @@ open_verify (const char *name, int fd,
 
   if (fd != -1)
     {
-      ElfW(Ehdr) *ehdr;
-      ElfW(Phdr) *phdr;
-      size_t maplength;
-
-      /* We successfully opened the file.  Now verify it is a file
-	 we can use.  */
-      __set_errno (0);
-      fbp->len = 0;
-      assert (sizeof (fbp->buf) > sizeof (ElfW(Ehdr)));
-      /* Read in the header.  */
-      do
-	{
-	  ssize_t retlen = __read_nocancel (fd, fbp->buf + fbp->len,
-					    sizeof (fbp->buf) - fbp->len);
-	  if (retlen <= 0)
-	    break;
-	  fbp->len += retlen;
-	}
-      while (__glibc_unlikely (fbp->len < sizeof (ElfW(Ehdr))));
-
-      /* This is where the ELF header is loaded.  */
-      ehdr = (ElfW(Ehdr) *) fbp->buf;
-
-      /* Now run the tests.  */
-      if (__glibc_unlikely (fbp->len < (ssize_t) sizeof (ElfW(Ehdr))))
-	{
-	  errval = errno;
-	  errstring = (errval == 0
-		       ? N_("file too short") : N_("cannot read file data"));
-	lose:
-	  if (free_name)
-	    {
-	      char *realname = (char *) name;
-	      name = strdupa (realname);
-	      free (realname);
-	    }
-	  __close_nocancel (fd);
-	  _dl_signal_error (errval, name, NULL, errstring);
-	}
-
-      /* See whether the ELF header is what we expect.  */
-      if (__glibc_unlikely (! VALID_ELF_HEADER (ehdr->e_ident, expected,
-						EI_ABIVERSION)
-			    || !VALID_ELF_ABIVERSION (ehdr->e_ident[EI_OSABI],
-						      ehdr->e_ident[EI_ABIVERSION])
-			    || memcmp (&ehdr->e_ident[EI_PAD],
-				       &expected[EI_PAD],
-				       EI_NIDENT - EI_PAD) != 0))
-	{
-	  /* Something is wrong.  */
-	  const Elf32_Word *magp = (const void *) ehdr->e_ident;
-	  if (*magp !=
-#if BYTE_ORDER == LITTLE_ENDIAN
-	      ((ELFMAG0 << (EI_MAG0 * 8))
-	       | (ELFMAG1 << (EI_MAG1 * 8))
-	       | (ELFMAG2 << (EI_MAG2 * 8))
-	       | (ELFMAG3 << (EI_MAG3 * 8)))
-#else
-	      ((ELFMAG0 << (EI_MAG3 * 8))
-	       | (ELFMAG1 << (EI_MAG2 * 8))
-	       | (ELFMAG2 << (EI_MAG1 * 8))
-	       | (ELFMAG3 << (EI_MAG0 * 8)))
-#endif
-	      )
-	    errstring = N_("invalid ELF header");
-
-	  else if (ehdr->e_ident[EI_CLASS] != ELFW(CLASS))
-	    {
-	      /* This is not a fatal error.  On architectures where
-		 32-bit and 64-bit binaries can be run this might
-		 happen.  */
-	      *found_other_class = true;
-	      __close_nocancel (fd);
-	      __set_errno (ENOENT);
-	      return -1;
-	    }
-	  else if (ehdr->e_ident[EI_DATA] != byteorder)
-	    {
-	      if (BYTE_ORDER == BIG_ENDIAN)
-		errstring = N_("ELF file data encoding not big-endian");
-	      else
-		errstring = N_("ELF file data encoding not little-endian");
-	    }
-	  else if (ehdr->e_ident[EI_VERSION] != EV_CURRENT)
-	    errstring
-	      = N_("ELF file version ident does not match current one");
-	  /* XXX We should be able so set system specific versions which are
-	     allowed here.  */
-	  else if (!VALID_ELF_OSABI (ehdr->e_ident[EI_OSABI]))
-	    errstring = N_("ELF file OS ABI invalid");
-	  else if (!VALID_ELF_ABIVERSION (ehdr->e_ident[EI_OSABI],
-					  ehdr->e_ident[EI_ABIVERSION]))
-	    errstring = N_("ELF file ABI version invalid");
-	  else if (memcmp (&ehdr->e_ident[EI_PAD], &expected[EI_PAD],
-			   EI_NIDENT - EI_PAD) != 0)
-	    errstring = N_("nonzero padding in e_ident");
-	  else
-	    /* Otherwise we don't know what went wrong.  */
-	    errstring = N_("internal error");
-
-	  goto lose;
-	}
-
-      if (__glibc_unlikely (ehdr->e_version != EV_CURRENT))
-	{
-	  errstring = N_("ELF file version does not match current one");
-	  goto lose;
-	}
-      if (! __glibc_likely (elf_machine_matches_host (ehdr)))
-	{
-	  __close_nocancel (fd);
-	  __set_errno (ENOENT);
-	  return -1;
-	}
-      else if (__glibc_unlikely (ehdr->e_type != ET_DYN
-				 && ehdr->e_type != ET_EXEC))
-	{
-	  errstring = N_("only ET_DYN and ET_EXEC can be loaded");
-	  goto lose;
-	}
-      else if (__glibc_unlikely (ehdr->e_phentsize != sizeof (ElfW(Phdr))))
-	{
-	  errstring = N_("ELF file's phentsize not the expected size");
-	  goto lose;
-	}
-
-      maplength = ehdr->e_phnum * sizeof (ElfW(Phdr));
-      if (ehdr->e_phoff + maplength <= (size_t) fbp->len)
-	phdr = (void *) (fbp->buf + ehdr->e_phoff);
-      else
-	{
-	  phdr = alloca (maplength);
-	  if ((size_t) __pread64_nocancel (fd, (void *) phdr, maplength,
-					   ehdr->e_phoff) != maplength)
-	    {
-	      errval = errno;
-	      errstring = N_("cannot read file data");
-	      goto lose;
-	    }
-	}
-
-      if (__glibc_unlikely (elf_machine_reject_phdr_p
-			    (phdr, ehdr->e_phnum, fbp->buf, fbp->len,
-			     loader, fd)))
-	{
-	  __close_nocancel (fd);
-	  __set_errno (ENOENT);
-	  return -1;
-	}
-
+      int err = do_open_verify (name, fd, fbp, loader,
+                                found_other_class,
+                                free_name);
+      if (err)
+        {
+          __close_nocancel (fd);
+          return -1;
+        }
     }
 
   return fd;
 }
-
+
 /* Try to open NAME in one of the directories in *DIRSP.
    Return the fd, or -1.  If successful, fill in *REALNAME
    with the malloc'd full directory name.  If it turns out
