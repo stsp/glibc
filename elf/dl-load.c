@@ -55,7 +55,8 @@ struct filebuf
 #else
 # define FILEBUF_SIZE 832
 #endif
-  char buf[FILEBUF_SIZE] __attribute__ ((aligned (__alignof (ElfW(Ehdr)))));
+  ssize_t allocated;
+  char *buf;
 };
 
 #include "dynamic-link.h"
@@ -123,6 +124,29 @@ static const size_t system_dirs_len[] =
   SYSTEM_DIRS_LEN
 };
 #define nsystem_dirs_len array_length (system_dirs_len)
+
+static void
+filebuf_done (struct filebuf *fb)
+{
+  free (fb->buf);
+  fb->buf = NULL;
+  fb->allocated = 0;
+}
+
+static bool
+filebuf_ensure (struct filebuf *fb, size_t size)
+{
+  bool ret = false;
+
+  if (size > fb->allocated)
+    {
+      size_t new_len = size + FILEBUF_SIZE;
+      fb->buf = realloc (fb->buf, new_len);
+      fb->allocated = new_len;
+      ret = true;
+    }
+  return ret;
+}
 
 static bool
 is_trusted_path_normalize (const char *path, size_t len)
@@ -976,18 +1000,8 @@ _dl_map_object_1 (struct link_map *l, int fd,
   l->l_phnum = header->e_phnum;
 
   maplength = header->e_phnum * sizeof (ElfW(Phdr));
-  if (header->e_phoff + maplength <= (size_t) fbp->len)
-    phdr = (void *) (fbp->buf + header->e_phoff);
-  else
-    {
-      phdr = alloca (maplength);
-      if ((size_t) __pread64_nocancel (fd, (void *) phdr, maplength,
-				       header->e_phoff) != maplength)
-	{
-	  errstring = N_("cannot read file data");
-	  goto lose_errno;
-	}
-    }
+  assert (header->e_phoff + maplength <= (size_t) fbp->len);
+  phdr = (void *) (fbp->buf + header->e_phoff);
 
    /* On most platforms presume that PT_GNU_STACK is absent and the stack is
     * executable.  Other platforms default to a nonexecutable stack and don't
@@ -1627,31 +1641,16 @@ do_open_verify (const char *name, int fd,
   /* Initialize it to make the compiler happy.  */
   const char *errstring = NULL;
   int errval = 0;
-  ElfW(Ehdr) *ehdr;
+  ElfW(Ehdr) _ehdr;
+  ElfW(Ehdr) *ehdr = &_ehdr;
   ElfW(Phdr) *phdr;
   size_t maplength;
 
   /* We successfully opened the file.  Now verify it is a file
    we can use.  */
   __set_errno (0);
-  fbp->len = 0;
-  assert (sizeof (fbp->buf) > sizeof (ElfW(Ehdr)));
   /* Read in the header.  */
-  do
-    {
-      ssize_t retlen = __read_nocancel (fd, fbp->buf + fbp->len,
-					sizeof (fbp->buf) - fbp->len);
-      if (retlen <= 0)
-        break;
-      fbp->len += retlen;
-    }
-  while (__glibc_unlikely (fbp->len < sizeof (ElfW(Ehdr))));
-
-  /* This is where the ELF header is loaded.  */
-  ehdr = (ElfW(Ehdr) *) fbp->buf;
-
-  /* Now run the tests.  */
-  if (__glibc_unlikely (fbp->len < (ssize_t) sizeof (ElfW(Ehdr))))
+  if (__pread64_nocancel (fd, &_ehdr, sizeof(_ehdr), 0) != sizeof(_ehdr))
     {
       errval = errno;
       errstring = (errval == 0
@@ -1752,19 +1751,17 @@ do_open_verify (const char *name, int fd,
     }
 
   maplength = ehdr->e_phnum * sizeof (ElfW(Phdr));
-  if (ehdr->e_phoff + maplength <= (size_t) fbp->len)
-    phdr = (void *) (fbp->buf + ehdr->e_phoff);
-  else
+  filebuf_ensure (fbp, maplength + ehdr->e_phoff);
+  if ((size_t) __pread64_nocancel (fd, fbp->buf, maplength +
+				   ehdr->e_phoff, 0) != maplength +
+				   ehdr->e_phoff)
     {
-      phdr = alloca (maplength);
-      if ((size_t) __pread64_nocancel (fd, (void *) phdr, maplength,
-					   ehdr->e_phoff) != maplength)
-        {
-          errval = errno;
-          errstring = N_("cannot read file data");
-          goto lose;
-        }
+      errval = errno;
+      errstring = N_("cannot read file data");
+      goto lose;
     }
+  fbp->len = maplength + ehdr->e_phoff;
+  phdr = (void *) (fbp->buf + ehdr->e_phoff);
 
   if (__glibc_unlikely (elf_machine_reject_phdr_p
 		       (phdr, ehdr->e_phnum, fbp->buf, fbp->len,
@@ -2026,16 +2023,16 @@ _dl_check_loaded(const char *name, Lmid_t nsid)
 
 /* Map in the shared object file NAME.  */
 
-struct link_map *
-_dl_map_object (struct link_map *loader, const char *name,
-		int type, int trace_mode, int mode, Lmid_t nsid)
+static struct link_map *
+___dl_map_object (struct link_map *loader, const char *name,
+		  int type, int trace_mode, int mode, Lmid_t nsid,
+		  struct filebuf *fbp)
 {
   int fd;
   const char *origname = NULL;
   char *realname;
   char *name_copy;
   struct link_map *l;
-  struct filebuf fb;
 
   assert (nsid >= 0);
   assert (nsid < GL(dl_nns));
@@ -2100,7 +2097,7 @@ _dl_map_object (struct link_map *loader, const char *name,
 	      {
 		fd = open_path (name, namelen, mode,
 				&l->l_rpath_dirs,
-				&realname, &fb, loader, LA_SER_RUNPATH,
+				&realname, fbp, loader, LA_SER_RUNPATH,
 				&found_other_class);
 		if (fd != -1)
 		  break;
@@ -2116,7 +2113,7 @@ _dl_map_object (struct link_map *loader, const char *name,
 			      "RPATH"))
 	    fd = open_path (name, namelen, mode,
 			    &main_map->l_rpath_dirs,
-			    &realname, &fb, loader ?: main_map, LA_SER_RUNPATH,
+			    &realname, fbp, loader ?: main_map, LA_SER_RUNPATH,
 			    &found_other_class);
 
 	  /* Also try DT_RUNPATH in the executable for LD_AUDIT dlopen
@@ -2130,7 +2127,7 @@ _dl_map_object (struct link_map *loader, const char *name,
 	      if (cache_rpath (main_map, &l_rpath_dirs,
 			       DT_RUNPATH, "RUNPATH"))
 		fd = open_path (name, namelen, mode, &l_rpath_dirs,
-				&realname, &fb, loader ?: main_map,
+				&realname, fbp, loader ?: main_map,
 				LA_SER_RUNPATH, &found_other_class);
 	    }
 	}
@@ -2138,7 +2135,7 @@ _dl_map_object (struct link_map *loader, const char *name,
       /* Try the LD_LIBRARY_PATH environment variable.  */
       if (fd == -1 && __rtld_env_path_list.dirs != (void *) -1)
 	fd = open_path (name, namelen, mode, &__rtld_env_path_list,
-			&realname, &fb,
+			&realname, fbp,
 			loader ?: GL(dl_ns)[LM_ID_BASE]._ns_loaded,
 			LA_SER_LIBPATH, &found_other_class);
 
@@ -2147,7 +2144,7 @@ _dl_map_object (struct link_map *loader, const char *name,
 	  && cache_rpath (loader, &loader->l_runpath_dirs,
 			  DT_RUNPATH, "RUNPATH"))
 	fd = open_path (name, namelen, mode,
-			&loader->l_runpath_dirs, &realname, &fb, loader,
+			&loader->l_runpath_dirs, &realname, fbp, loader,
 			LA_SER_RUNPATH, &found_other_class);
 
       if (fd == -1)
@@ -2156,7 +2153,7 @@ _dl_map_object (struct link_map *loader, const char *name,
           if (realname != NULL)
             {
               fd = open_verify (realname, fd,
-                                &fb, loader ?: GL(dl_ns)[nsid]._ns_loaded,
+                                fbp, loader ?: GL(dl_ns)[nsid]._ns_loaded,
                                 LA_SER_CONFIG, mode, &found_other_class,
                                 false);
               if (fd == -1)
@@ -2210,7 +2207,7 @@ _dl_map_object (struct link_map *loader, const char *name,
 	      if (cached != NULL)
 		{
 		  fd = open_verify (cached, -1,
-				    &fb, loader ?: GL(dl_ns)[nsid]._ns_loaded,
+				    fbp, loader ?: GL(dl_ns)[nsid]._ns_loaded,
 				    LA_SER_CONFIG, mode, &found_other_class,
 				    false);
 		  if (__glibc_likely (fd != -1))
@@ -2228,7 +2225,7 @@ _dl_map_object (struct link_map *loader, const char *name,
 	      || __glibc_likely (!(l->l_flags_1 & DF_1_NODEFLIB)))
 	  && __rtld_search_dirs.dirs != (void *) -1)
 	fd = open_path (name, namelen, mode, &__rtld_search_dirs,
-			&realname, &fb, l, LA_SER_DEFAULT, &found_other_class);
+			&realname, fbp, l, LA_SER_DEFAULT, &found_other_class);
 
       /* Add another newline when we are tracing the library loading.  */
       if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_LIBS))
@@ -2244,7 +2241,7 @@ _dl_map_object (struct link_map *loader, const char *name,
 	fd = -1;
       else
 	{
-	  fd = open_verify (realname, -1, &fb,
+	  fd = open_verify (realname, -1, fbp,
 			    loader ?: GL(dl_ns)[nsid]._ns_loaded, 0, mode,
 			    &found_other_class, true);
 	  if (__glibc_unlikely (fd == -1))
@@ -2305,8 +2302,21 @@ _dl_map_object (struct link_map *loader, const char *name,
     }
 
   void *stack_end = __libc_stack_end;
-  return _dl_map_object_from_fd (name, origname, fd, &fb, realname, loader,
+  return _dl_map_object_from_fd (name, origname, fd, fbp, realname, loader,
 				 type, mode, &stack_end, nsid);
+}
+
+struct link_map *
+_dl_map_object (struct link_map *loader, const char *name,
+                 int type, int trace_mode,
+                 int mode, Lmid_t nsid)
+{
+  struct link_map *ret;
+  struct filebuf fb = {};
+
+  ret = ___dl_map_object (loader, name, type, trace_mode, mode, nsid, &fb);
+  filebuf_done (&fb);
+  return ret;
 }
 
 struct add_path_state
