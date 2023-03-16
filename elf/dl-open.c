@@ -40,6 +40,7 @@
 
 #include <dl-dst.h>
 #include <dl-prop.h>
+#include <dl-main.h>
 
 
 /* We must be careful not to leave us in an inconsistent state.  Thus we
@@ -48,12 +49,17 @@
 struct dl_open_args
 {
   const char *file;
+  void *private;
   int mode;
   /* This is the caller of the dlopen() function.  */
   const void *caller_dlopen;
   struct link_map *map;
   /* Namespace ID.  */
   Lmid_t nsid;
+
+  struct link_map *
+  (*dl_map) (struct link_map *loader, const char *name, void *private,
+             int type, int trace_mode, int mode, Lmid_t nsid);
 
   /* Original value of _ns_global_scope_pending_adds.  Set by
      dl_open_worker.  Only valid if nsid is a real namespace
@@ -531,7 +537,7 @@ dl_open_worker_begin (void *a)
 
   /* Load the named object.  */
   struct link_map *new;
-  args->map = new = _dl_map_object (call_map, file, lt_loaded, 0,
+  args->map = new = args->dl_map (call_map, file, args->private, lt_loaded, 0,
 				    mode | __RTLD_CALLMAP, args->nsid);
 
   /* If the pointer returned is NULL this means the RTLD_NOLOAD flag is
@@ -820,9 +826,11 @@ dl_open_worker (void *a)
 		      new->l_name, new->l_ns, new->l_direct_opencount);
 }
 
-void *
-_dl_open (const char *file, int mode, const void *caller_dlopen, Lmid_t nsid,
-	  int argc, char *argv[], char *env[])
+static void *
+do_dl_open (const char *file, void *private, int mode,
+            const void *caller_dlopen, Lmid_t nsid,
+            int argc, char *argv[], char *env[],
+            __typeof (__dl_map_object) *dl_map)
 {
   if ((mode & RTLD_BINDING_MASK) == 0)
     /* One of the flags must be set.  */
@@ -872,10 +880,12 @@ no more namespaces available for dlmopen()"));
 
   struct dl_open_args args;
   args.file = file;
+  args.private = private;
   args.mode = mode;
   args.caller_dlopen = caller_dlopen;
   args.map = NULL;
   args.nsid = nsid;
+  args.dl_map = dl_map;
   /* args.libc_already_loaded is always assigned by dl_open_worker
      (before any explicit/non-local returns).  */
   args.argc = argc;
@@ -939,6 +949,13 @@ no more namespaces available for dlmopen()"));
   return args.map;
 }
 
+void *
+_dl_open (const char *file, int mode, const void *caller_dlopen, Lmid_t nsid,
+          int argc, char *argv[], char *env[])
+{
+  return do_dl_open (file, NULL, mode, caller_dlopen, nsid, argc, argv, env,
+                     __dl_map_object);
+}
 
 void
 _dl_show_scope (struct link_map *l, int from)

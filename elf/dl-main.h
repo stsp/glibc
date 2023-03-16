@@ -104,6 +104,15 @@ struct dl_main_state
   bool version_info;
 };
 
+/* Open the shared object NAME and map in its segments.
+   LOADER's DT_RPATH is used in searching for NAME.
+   If the object is already opened, returns its existing map.  */
+extern struct link_map *
+__dl_map_object (struct link_map *loader,
+                 const char *name, void *private,
+                 int type, int trace_mode, int mode,
+                 Lmid_t nsid) attribute_hidden;
+
 /* Helper function to invoke _dl_init_paths with the right arguments
    from *STATE.  */
 static inline void

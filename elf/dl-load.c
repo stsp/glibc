@@ -2331,8 +2331,8 @@ ___dl_map_object (struct link_map *loader, const char *name,
 }
 
 struct link_map *
-_dl_map_object (struct link_map *loader, const char *name,
-                 int type, int trace_mode,
+__dl_map_object (struct link_map *loader, const char *name,
+                 void *private, int type, int trace_mode,
                  int mode, Lmid_t nsid)
 {
   struct link_map *ret;
@@ -2341,6 +2341,14 @@ _dl_map_object (struct link_map *loader, const char *name,
   ret = ___dl_map_object (loader, name, type, trace_mode, mode, nsid, &fb);
   filebuf_done (&fb);
   return ret;
+}
+
+struct link_map *
+_dl_map_object (struct link_map *loader, const char *name,
+                int type, int trace_mode,
+                int mode, Lmid_t nsid)
+{
+  return __dl_map_object (loader, name, NULL, type, trace_mode, mode, nsid);
 }
 
 struct add_path_state
