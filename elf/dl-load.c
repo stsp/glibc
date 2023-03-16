@@ -980,7 +980,8 @@ _dl_map_object_1 (struct link_map *l, void *fd,
                   int mode, struct link_map *loader,
                   void **stack_endp, int *errval_p,
                   const char **errstring_p,
-                  __typeof (do_mmap) *m_map)
+                  __typeof (do_mmap) *m_map,
+                  dl_premap_t *premap)
 {
   const ElfW(Ehdr) *header;
   const ElfW(Phdr) *phdr;
@@ -1180,7 +1181,7 @@ _dl_map_object_1 (struct link_map *l, void *fd,
        l_map_start, l_map_end, l_addr, l_contiguous, l_text_end, l_phdr
      */
     errstring = _dl_map_segments (l, fd, header, type, loadcmds, nloadcmds,
-				  maplength, has_holes, loader, m_map);
+				  maplength, has_holes, loader, m_map, premap);
     if (__glibc_unlikely (errstring != NULL))
       {
 	/* Mappings can be in an inconsistent state: avoid unmap.  */
@@ -1439,6 +1440,12 @@ do_mmap (void *addr, size_t length, int prot, int flags,
   return __mmap (addr, length, prot, flags, fd, offset);
 }
 
+static void *
+do_map_segment (void *mappref, size_t maplength, size_t mapalign, void *cookie)
+{
+  return (void *) _dl_map_segment ((ElfW(Addr)) mappref, maplength, mapalign);
+}
+
 #ifndef EXTERNAL_MAP_FROM_FD
 static
 #endif
@@ -1560,7 +1567,7 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
     }
 
   if (_dl_map_object_1 (l, &fd, fbp, mode, loader, stack_endp, &errval,
-                        &errstring, do_mmap))
+                        &errstring, do_mmap, do_map_segment))
     goto lose;
 
   _dl_process_phdrs (l, fd);

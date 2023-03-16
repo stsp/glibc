@@ -78,7 +78,8 @@ _dl_map_segments (struct link_map *l, void *fd,
                   const ElfW(Ehdr) *header, int type,
                   const struct loadcmd loadcmds[], size_t nloadcmds,
                   const size_t maplength, bool has_holes,
-                  struct link_map *loader, __typeof (do_mmap) *m_map)
+                  struct link_map *loader, __typeof (do_mmap) *m_map,
+                  dl_premap_t *premap)
 {
   const struct loadcmd *c = loadcmds;
 
@@ -100,7 +101,9 @@ _dl_map_segments (struct link_map *l, void *fd,
            - MAP_BASE_ADDR (l));
 
       /* Remember which part of the address space this object uses.  */
-      l->l_map_start = _dl_map_segment (mappref, maplength, c->mapalign);
+      l->l_map_start = (ElfW(Addr)) premap ((void *) mappref,
+                                            maplength, c->mapalign,
+                                            fd);
       if (__glibc_unlikely ((void *) l->l_map_start == MAP_FAILED))
         return DL_MAP_SEGMENTS_ERROR_MAP_SEGMENT;
 

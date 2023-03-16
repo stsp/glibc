@@ -84,6 +84,9 @@ static void *
 do_mmap (void *addr, size_t length, int prot, int flags,
          void *arg, off_t offset);
 
+typedef void *
+(dl_premap_t) (void *mappref, size_t maplength, size_t mapalign, void *cookie);
+
 /* This is a subroutine of _dl_map_segments.  It should be called for each
    load command, some time after L->l_addr has been set correctly.  It is
    responsible for setting up the l_text_end and l_phdr fields.  */
@@ -123,7 +126,8 @@ static const char *_dl_map_segments (struct link_map *l, void *fd,
                                      const size_t maplength,
                                      bool has_holes,
                                      struct link_map *loader,
-                                     __typeof (do_mmap) *m_map);
+                                     __typeof (do_mmap) *m_map,
+                                     dl_premap_t *premap);
 
 /* All the error message strings _dl_map_segments might return are
    listed here so that different implementations in different sysdeps
