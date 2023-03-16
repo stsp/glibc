@@ -1611,10 +1611,18 @@ print_search_path (struct r_search_path_elem **list,
     _dl_debug_printf_c ("\t\t(%s)\n", what);
 }
 
+static ssize_t
+do_pread (void *arg, void *buf, size_t count, off_t offset)
+{
+  int fd = *(const int *) arg;
+  return __pread64_nocancel (fd, buf, count, offset);
+}
+
 static int
-do_open_verify (const char *name, int fd,
+do_open_verify (const char *name, void *fd,
                 struct filebuf *fbp, struct link_map *loader,
-                bool *found_other_class, bool free_name)
+                bool *found_other_class, bool free_name,
+                __typeof (do_pread) *pread_cb)
 {
   /* This is the expected ELF header.  */
 #define ELF32_CLASS ELFCLASS32
@@ -1650,7 +1658,7 @@ do_open_verify (const char *name, int fd,
    we can use.  */
   __set_errno (0);
   /* Read in the header.  */
-  if (__pread64_nocancel (fd, &_ehdr, sizeof(_ehdr), 0) != sizeof(_ehdr))
+  if (pread_cb (fd, &_ehdr, sizeof(_ehdr), 0) != sizeof(_ehdr))
     {
       errval = errno;
       errstring = (errval == 0
@@ -1752,7 +1760,7 @@ do_open_verify (const char *name, int fd,
 
   maplength = ehdr->e_phnum * sizeof (ElfW(Phdr));
   filebuf_ensure (fbp, maplength + ehdr->e_phoff);
-  if ((size_t) __pread64_nocancel (fd, fbp->buf, maplength +
+  if ((size_t) pread_cb (fd, fbp->buf, maplength +
 				   ehdr->e_phoff, 0) != maplength +
 				   ehdr->e_phoff)
     {
@@ -1813,9 +1821,9 @@ open_verify (const char *name, int fd,
 
   if (fd != -1)
     {
-      int err = do_open_verify (name, fd, fbp, loader,
+      int err = do_open_verify (name, &fd, fbp, loader,
                                 found_other_class,
-                                free_name);
+                                free_name, do_pread);
       if (err)
         {
           __close_nocancel (fd);
