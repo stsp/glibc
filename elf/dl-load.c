@@ -975,11 +975,12 @@ _dl_process_phdrs (struct link_map *l, int fd)
 }
 
 static int
-_dl_map_object_1 (struct link_map *l, int fd,
+_dl_map_object_1 (struct link_map *l, void *fd,
                   struct filebuf *fbp,
                   int mode, struct link_map *loader,
                   void **stack_endp, int *errval_p,
-                  const char **errstring_p)
+                  const char **errstring_p,
+                  __typeof (do_mmap) *m_map)
 {
   const ElfW(Ehdr) *header;
   const ElfW(Phdr) *phdr;
@@ -1179,7 +1180,7 @@ _dl_map_object_1 (struct link_map *l, int fd,
        l_map_start, l_map_end, l_addr, l_contiguous, l_text_end, l_phdr
      */
     errstring = _dl_map_segments (l, fd, header, type, loadcmds, nloadcmds,
-				  maplength, has_holes, loader);
+				  maplength, has_holes, loader, m_map);
     if (__glibc_unlikely (errstring != NULL))
       {
 	/* Mappings can be in an inconsistent state: avoid unmap.  */
@@ -1430,6 +1431,14 @@ _dl_map_object_2 (struct link_map *l, int mode,
 /* Map in the shared object NAME, actually located in REALNAME, and already
    opened on FD.  */
 
+static void *
+do_mmap (void *addr, size_t length, int prot, int flags,
+         void *arg, off_t offset)
+{
+  int fd = arg ? *(const int *) arg : -1;
+  return __mmap (addr, length, prot, flags, fd, offset);
+}
+
 #ifndef EXTERNAL_MAP_FROM_FD
 static
 #endif
@@ -1550,8 +1559,8 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
       goto lose_errno;
     }
 
-  if (_dl_map_object_1 (l, fd, fbp, mode, loader, stack_endp, &errval,
-                        &errstring))
+  if (_dl_map_object_1 (l, &fd, fbp, mode, loader, stack_endp, &errval,
+                        &errstring, do_mmap))
     goto lose;
 
   _dl_process_phdrs (l, fd);

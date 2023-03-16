@@ -74,11 +74,11 @@ _dl_map_segment (ElfW(Addr) mappref, size_t maplength, size_t mapalign)
    other use of those parts of the address space).  */
 
 static __always_inline const char *
-_dl_map_segments (struct link_map *l, int fd,
+_dl_map_segments (struct link_map *l, void *fd,
                   const ElfW(Ehdr) *header, int type,
                   const struct loadcmd loadcmds[], size_t nloadcmds,
                   const size_t maplength, bool has_holes,
-                  struct link_map *loader)
+                  struct link_map *loader, __typeof (do_mmap) *m_map)
 {
   const struct loadcmd *c = loadcmds;
 
@@ -138,7 +138,7 @@ _dl_map_segments (struct link_map *l, int fd,
     {
       if (c->mapend > c->mapstart
           /* Map the segment contents from the file.  */
-          && (__mmap ((void *) (l->l_addr + c->mapstart),
+          && (m_map ((void *) (l->l_addr + c->mapstart),
                       c->mapend - c->mapstart, c->prot,
                       MAP_FIXED|MAP_COPY|MAP_FILE,
                       fd, c->mapoff)
