@@ -70,10 +70,11 @@ do_test (void)
   int fd;
   int num;
   off_t len;
+  off_t orig_len;
   struct link_map *lm;
   const char *shm_name = "/tst-dlmem";
   int shm_fd;
-  struct dlmem_args a;
+  struct dlmem_args a = {};
 
   shm_fd = memfd_create (shm_name, 0);
   if (shm_fd == -1)
@@ -84,9 +85,43 @@ do_test (void)
     error (EXIT_FAILURE, 0, "cannot open: glreflib1.so");
   len = lseek (fd, 0, SEEK_END);
   lseek (fd, 0, SEEK_SET);
+  /* For the sake of testing add extra space. */
+  orig_len = len;
+  len += 4096;
   addr = mmap (NULL, len, PROT_READ, MAP_PRIVATE, fd, 0);
   if (addr == MAP_FAILED)
     error (EXIT_FAILURE, 0, "cannot mmap: glreflib1.so");
+
+  /* Try unaligned buffer. */
+  handle = dlmem (addr + 4, len, RTLD_NOW | RTLD_LOCAL, NULL);
+  TEST_VERIFY (handle == NULL);
+  /* errno is set by dlerror() so needs to print something. */
+  printf ("unaligned buf gives %s\n", dlerror ());
+  TEST_COMPARE (errno, EINVAL);
+  /* Try allow unaligned buffer but not at the beginning of solib. */
+  a.flags = DLMEM_GENBUF_SRC;
+  handle = dlmem (addr + 4, len, RTLD_NOW | RTLD_LOCAL, &a);
+  TEST_VERIFY (handle == NULL);
+  printf ("non-elf data gives %s\n", dlerror ());
+  TEST_COMPARE (errno, EINVAL);
+  /* Try allow unaligned buffer but with good solib. */
+  mprotect (addr, len, PROT_READ | PROT_WRITE);
+  memmove (addr + 4, addr, orig_len);
+  /* Forgot to allow unaligned buffer. */
+  handle = dlmem (addr + 4, len, RTLD_NOW | RTLD_LOCAL, NULL);
+  TEST_VERIFY (handle == NULL);
+  /* Should now be well. */
+  handle = dlmem (addr + 4, len, RTLD_NOW | RTLD_LOCAL, &a);
+  TEST_VERIFY (handle != NULL);
+
+  /* Lets do this all again, now for real. */
+  dlclose (handle);
+  munmap (addr, len);
+  len = orig_len;
+  addr = mmap (NULL, len, PROT_READ, MAP_PRIVATE, fd, 0);
+  if (addr == MAP_FAILED)
+    error (EXIT_FAILURE, 0, "cannot mmap: glreflib1.so");
+
   a.soname = "glreflib1.so";
   a.flags = DLMEM_DONTREPLACE;
   a.nsid = LM_ID_BASE;

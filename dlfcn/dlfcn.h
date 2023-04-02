@@ -76,6 +76,10 @@ typedef void *
 /* Do not replace mapping created by premap callback.
    dlmem() will then use memcpy(). */
 #define DLMEM_DONTREPLACE 1
+/* Treat source memory buffer as a generic unaligned buffer, rather
+   than a file-backed or anonymously-shared mapping. Anonymous private
+   mapping also needs this flag to be set. */
+#define DLMEM_GENBUF_SRC 2
 
 struct dlmem_args {
   /* Optional name to associate with the loaded object. */

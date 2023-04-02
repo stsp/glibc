@@ -2382,6 +2382,7 @@ do_memremap (void *addr, size_t length, int prot, int flags,
              void *arg, off_t offset)
 {
   const struct dlmem_fbuf *fb = arg;
+  const struct dlmem_args *dlm_args = fb->dlm_args;
   size_t to_copy = 0;
 
   assert (flags & MAP_FIXED);
@@ -2389,6 +2390,11 @@ do_memremap (void *addr, size_t length, int prot, int flags,
 
   if (flags & MAP_ANONYMOUS)
     return __mmap (addr, length, prot, flags, -1, 0);
+
+  /* With DLMEM_GENBUF_SRC flag, everything but anonymous mmaps goes
+     to memcpy. */
+  if (dlm_args && (dlm_args->flags & DLMEM_GENBUF_SRC))
+    return do_mmapcpy(addr, length, prot, flags, arg, offset);
 
   if (offset < fb->len)
     {

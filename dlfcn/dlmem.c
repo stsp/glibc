@@ -40,12 +40,16 @@ static void
 dlmem_doit (void *a)
 {
   struct _dlmem_args *args = (struct _dlmem_args *) a;
+  const struct dlmem_args *dlm_args = args->args;
 
   if (args->mode & ~(RTLD_BINDING_MASK | RTLD_NOLOAD | RTLD_DEEPBIND
 		     | RTLD_GLOBAL | RTLD_LOCAL | RTLD_NODELETE
 		     | __RTLD_SPROF))
     _dl_signal_error (EINVAL, NULL, NULL, _("invalid mode parameter"));
-  if ((uintptr_t) args->buffer & (GLRO(dl_pagesize) - 1))
+
+  /* Unaligned buffer is only permitted when DLMEM_GENBUF_SRC flag set. */
+  if (((uintptr_t) args->buffer & (GLRO(dl_pagesize) - 1))
+      && (!dlm_args || !(dlm_args->flags & DLMEM_GENBUF_SRC)))
     _dl_signal_error (EINVAL, NULL, NULL, _("buffer not aligned"));
 
   args->new = GLRO(dl_mem) (args->buffer, args->size,
