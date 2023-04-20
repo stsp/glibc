@@ -75,7 +75,7 @@ ELF_PREFERRED_ADDRESS_DATA;
    Its details have been expanded out and converted.  */
 struct loadcmd
 {
-  ElfW(Addr) mapstart, mapend, dataend, allocend, mapalign;
+  ElfW(Addr) mapstart, mapend, dataend, allocend, mapalign, maphole;
   ElfW(Off) mapoff;
   int prot;                             /* PROT_* bits.  */
 };
@@ -118,7 +118,6 @@ static const char *_dl_map_segments (struct link_map *l, int fd,
                                      const struct loadcmd loadcmds[],
                                      size_t nloadcmds,
                                      const size_t maplength,
-                                     bool has_holes,
                                      struct link_map *loader);
 
 /* All the error message strings _dl_map_segments might return are

@@ -77,7 +77,7 @@ static __always_inline const char *
 _dl_map_segments (struct link_map *l, int fd,
                   const ElfW(Ehdr) *header, int type,
                   const struct loadcmd loadcmds[], size_t nloadcmds,
-                  const size_t maplength, bool has_holes,
+                  const size_t maplength,
                   struct link_map *loader)
 {
   const struct loadcmd *c = loadcmds;
@@ -106,25 +106,6 @@ _dl_map_segments (struct link_map *l, int fd,
 
       l->l_map_end = l->l_map_start + maplength;
       l->l_addr = l->l_map_start - c->mapstart;
-
-      if (has_holes)
-        {
-          /* Change protection on the excess portion to disallow all access;
-             the portions we do not remap later will be inaccessible as if
-             unallocated.  Then jump into the normal segment-mapping loop to
-             handle the portion of the segment past the end of the file
-             mapping.  */
-	  if (__glibc_unlikely (loadcmds[nloadcmds - 1].mapstart <
-				c->mapend))
-	    return N_("ELF load command address/offset not page-aligned");
-          if (__glibc_unlikely
-              (__mprotect ((caddr_t) (l->l_addr + c->mapend),
-                           loadcmds[nloadcmds - 1].mapstart - c->mapend,
-                           PROT_NONE) < 0))
-            return DL_MAP_SEGMENTS_ERROR_MPROTECT;
-        }
-
-      l->l_contiguous = 1;
     }
   else
     {
@@ -136,11 +117,14 @@ _dl_map_segments (struct link_map *l, int fd,
       if (__glibc_unlikely ((void *) l->l_map_start == MAP_FAILED))
         return DL_MAP_SEGMENTS_ERROR_MAP_SEGMENT;
       l->l_map_end = l->l_map_start + maplength;
-      l->l_contiguous = !has_holes;
     }
+  /* Reset to 0 later if hole found. */
+  l->l_contiguous = 1;
 
   while (c < &loadcmds[nloadcmds])
     {
+      ElfW(Addr) hole_start, hole_size;
+
       if (c->mapend > c->mapstart
           /* Map the segment contents from the file.  */
           && (__mmap ((void *) (l->l_addr + c->mapstart),
@@ -157,11 +141,15 @@ _dl_map_segments (struct link_map *l, int fd,
           /* Extra zero pages should appear at the end of this segment,
              after the data mapped from the file.   */
           ElfW(Addr) zero, zeroend, zeropage;
+          ElfW(Off) hole_off;
 
           zero = l->l_addr + c->dataend;
           zeroend = l->l_addr + c->allocend;
           zeropage = ((zero + GLRO(dl_pagesize) - 1)
                       & ~(GLRO(dl_pagesize) - 1));
+          hole_start = ALIGN_UP (c->allocend, GLRO(dl_pagesize));
+          hole_off = hole_start - c->mapend;
+          hole_size = c->maphole - hole_off;
 
           if (zeroend < zeropage)
             /* All the extra data is in the last page of the segment.
@@ -192,6 +180,28 @@ _dl_map_segments (struct link_map *l, int fd,
                                                 zeroend - zeropage,
                                                 c->prot) < 0))
                 return DL_MAP_SEGMENTS_ERROR_MPROTECT;
+            }
+        }
+      else
+        {
+          hole_start = c->mapend;
+          hole_size = c->maphole;
+        }
+
+      if (__glibc_unlikely (c->maphole))
+        {
+          if (__glibc_likely (type == ET_DYN))
+            {
+              if (hole_size)
+                {
+                  if (__mprotect ((caddr_t) (l->l_addr + hole_start),
+                                   hole_size, PROT_NONE) < 0)
+                    return DL_MAP_SEGMENTS_ERROR_MPROTECT;
+                }
+            }
+          else if (l->l_contiguous)
+            {
+              l->l_contiguous = 0;
             }
         }
 

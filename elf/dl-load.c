@@ -1089,7 +1089,6 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
     /* Scan the program header table, collecting its load commands.  */
     struct loadcmd loadcmds[l->l_phnum];
     size_t nloadcmds = 0;
-    bool has_holes = false;
     bool empty_dynamic = false;
     ElfW(Addr) p_align_max = 0;
 
@@ -1141,6 +1140,7 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
 	  if (powerof2 (ph->p_align) && ph->p_align > p_align_max)
 	    p_align_max = ph->p_align;
 	  c->mapoff = ALIGN_DOWN (ph->p_offset, GLRO(dl_pagesize));
+	  c->maphole = 0;
 
 	  DIAG_PUSH_NEEDS_COMMENT;
 
@@ -1153,8 +1153,8 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
 #endif
 	  /* Determine whether there is a gap between the last segment
 	     and this one.  */
-	  if (nloadcmds > 1 && c[-1].mapend != c->mapstart)
-	    has_holes = true;
+	  if (nloadcmds > 1 && c[-1].mapend < c->mapstart)
+	    c[-1].maphole = c->mapstart - c[-1].mapend;
 	  DIAG_POP_NEEDS_COMMENT;
 
 	  /* Optimize a common case.  */
@@ -1256,7 +1256,7 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
        l_map_start, l_map_end, l_addr, l_contiguous, l_text_end, l_phdr
      */
     errstring = _dl_map_segments (l, fd, header, type, loadcmds, nloadcmds,
-				  maplength, has_holes, loader);
+				  maplength, loader);
     if (__glibc_unlikely (errstring != NULL))
       {
 	/* Mappings can be in an inconsistent state: avoid unmap.  */
