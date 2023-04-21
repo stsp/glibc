@@ -129,7 +129,12 @@ _dl_map_segments (struct link_map *l, int fd,
   else
     {
       /* Remember which part of the address space this object uses.  */
-      l->l_map_start = c->mapstart + l->l_addr;
+      l->l_map_start = (ElfW(Addr)) __mmap ((caddr_t) l->l_addr + c->mapstart,
+                                            maplength, PROT_NONE,
+                                            MAP_ANON|MAP_PRIVATE|MAP_FIXED,
+                                            -1, 0);
+      if (__glibc_unlikely ((void *) l->l_map_start == MAP_FAILED))
+        return DL_MAP_SEGMENTS_ERROR_MAP_SEGMENT;
       l->l_map_end = l->l_map_start + maplength;
       l->l_contiguous = !has_holes;
     }
@@ -182,13 +187,11 @@ _dl_map_segments (struct link_map *l, int fd,
 
           if (zeroend > zeropage)
             {
-              /* Map the remaining zero pages in from the zero fill FD.  */
-              caddr_t mapat;
-              mapat = __mmap ((caddr_t) zeropage, zeroend - zeropage,
-                              c->prot, MAP_ANON|MAP_PRIVATE|MAP_FIXED,
-                              -1, 0);
-              if (__glibc_unlikely (mapat == MAP_FAILED))
-                return DL_MAP_SEGMENTS_ERROR_MAP_ZERO_FILL;
+              /* Protect the remaining zero pages.  */
+              if (__glibc_unlikely (__mprotect ((caddr_t) zeropage,
+                                                zeroend - zeropage,
+                                                c->prot) < 0))
+                return DL_MAP_SEGMENTS_ERROR_MPROTECT;
             }
         }
 
