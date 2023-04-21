@@ -123,18 +123,44 @@ _dl_map_segments (struct link_map *l, int fd,
 
   while (c < &loadcmds[nloadcmds])
     {
-      ElfW(Addr) hole_start, hole_size;
-
       if (c->mapend > c->mapstart
           /* Map the segment contents from the file.  */
           && (__mmap ((void *) (l->l_addr + c->mapstart),
-                      c->mapend - c->mapstart, c->prot,
+                      c->mapend - c->mapstart, PROT_READ | PROT_WRITE,
                       MAP_FIXED|MAP_COPY|MAP_FILE,
                       fd, c->mapoff)
               == MAP_FAILED))
         return DL_MAP_SEGMENTS_ERROR_MAP_SEGMENT;
 
       _dl_postprocess_loadcmd (l, header, c);
+
+      ++c;
+    }
+
+  /* Notify ELF_PREFERRED_ADDRESS that we have to load this one
+     fixed.  */
+  ELF_FIXED_ADDRESS (loader, c->mapstart);
+
+  return NULL;
+}
+
+static __always_inline const char *
+_dl_finalize_segments (struct link_map *l, int type,
+                       const struct loadcmd loadcmds[], size_t nloadcmds)
+{
+  const struct loadcmd *c = loadcmds;
+
+  while (c < &loadcmds[nloadcmds])
+    {
+      ElfW(Addr) hole_start, hole_size;
+
+      if (c->mapend > c->mapstart)
+        {
+          if (__mprotect ((void *) (l->l_addr + c->mapstart),
+                      c->mapend - c->mapstart, c->prot) < 0)
+            return DL_MAP_SEGMENTS_ERROR_MPROTECT;
+
+        }
 
       if (c->allocend > c->dataend)
         {
@@ -207,10 +233,6 @@ _dl_map_segments (struct link_map *l, int fd,
 
       ++c;
     }
-
-  /* Notify ELF_PREFERRED_ADDRESS that we have to load this one
-     fixed.  */
-  ELF_FIXED_ADDRESS (loader, c->mapstart);
 
   return NULL;
 }

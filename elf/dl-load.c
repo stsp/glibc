@@ -1263,6 +1263,9 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
 	l->l_map_start = l->l_map_end = 0;
 	goto lose;
       }
+    errstring = _dl_finalize_segments (l, type, loadcmds, nloadcmds);
+    if (__glibc_unlikely (errstring != NULL))
+      goto lose;
   }
 
   if (l->l_ld != 0)

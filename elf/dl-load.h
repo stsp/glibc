@@ -120,6 +120,11 @@ static const char *_dl_map_segments (struct link_map *l, int fd,
                                      const size_t maplength,
                                      struct link_map *loader);
 
+static const char *_dl_finalize_segments (struct link_map *l,
+                                          int type,
+                                          const struct loadcmd loadcmds[],
+                                          size_t nloadcmds);
+
 /* All the error message strings _dl_map_segments might return are
    listed here so that different implementations in different sysdeps
    dl-map-segments.h files all use consistent strings that are
