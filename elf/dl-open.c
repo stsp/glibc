@@ -645,6 +645,28 @@ do_reloc_1 (struct link_map *new, int mode, Lmid_t nsid, bool call_ctors)
 }
 
 static void
+do_reloc_2 (struct link_map *new, int mode, struct dl_open_args *args)
+{
+  /* Run the initializer functions of new objects.  Temporarily
+     disable the exception handler, so that lazy binding failures are
+     fatal.  */
+  {
+    struct dl_init_args init_args =
+      {
+        .new = new,
+        .argc = args->argc,
+        .argv = args->argv,
+        .env = args->env
+      };
+    _dl_catch_exception (NULL, call_dl_init, &init_args);
+  }
+
+  /* Now we can make the new map available in the global scope.  */
+  if (mode & RTLD_GLOBAL)
+    add_to_global_update (new);
+}
+
+static void
 dl_open_worker_begin (void *a)
 {
   struct dl_open_args *args = a;
@@ -801,23 +823,7 @@ dl_open_worker (void *a)
   int mode = args->mode;
   struct link_map *new = args->map;
 
-  /* Run the initializer functions of new objects.  Temporarily
-     disable the exception handler, so that lazy binding failures are
-     fatal.  */
-  {
-    struct dl_init_args init_args =
-      {
-        .new = new,
-        .argc = args->argc,
-        .argv = args->argv,
-        .env = args->env
-      };
-    _dl_catch_exception (NULL, call_dl_init, &init_args);
-  }
-
-  /* Now we can make the new map available in the global scope.  */
-  if (mode & RTLD_GLOBAL)
-    add_to_global_update (new);
+  do_reloc_2 (new, mode, args);
 
   /* Let the user know about the opencount.  */
   if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_FILES))
