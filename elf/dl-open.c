@@ -486,114 +486,8 @@ call_dl_init (void *closure)
 }
 
 static void
-dl_open_worker_begin (void *a)
+do_reloc_1 (struct link_map *new, int mode, Lmid_t nsid, bool call_ctors)
 {
-  struct dl_open_args *args = a;
-  const char *file = args->file;
-  int mode = args->mode;
-  struct link_map *call_map = NULL;
-
-  /* Determine the caller's map if necessary.  This is needed in case
-     we have a DST, when we don't know the namespace ID we have to put
-     the new object in, or when the file name has no path in which
-     case we need to look along the RUNPATH/RPATH of the caller.  */
-  const char *dst = strchr (file, '$');
-  if (dst != NULL || args->nsid == __LM_ID_CALLER
-      || strchr (file, '/') == NULL)
-    {
-      const void *caller_dlopen = args->caller_dlopen;
-
-      /* We have to find out from which object the caller is calling.
-	 By default we assume this is the main application.  */
-      call_map = GL(dl_ns)[LM_ID_BASE]._ns_loaded;
-
-      struct link_map *l = _dl_find_dso_for_object ((ElfW(Addr)) caller_dlopen);
-
-      if (l)
-	call_map = l;
-
-      if (args->nsid == __LM_ID_CALLER)
-	args->nsid = call_map->l_ns;
-    }
-
-  /* The namespace ID is now known.  Keep track of whether libc.so was
-     already loaded, to determine whether it is necessary to call the
-     early initialization routine (or clear libc_map on error).  */
-  args->libc_already_loaded = GL(dl_ns)[args->nsid].libc_map != NULL;
-
-  /* Retain the old value, so that it can be restored.  */
-  args->original_global_scope_pending_adds
-    = GL (dl_ns)[args->nsid]._ns_global_scope_pending_adds;
-
-  /* One might be tempted to assert that we are RT_CONSISTENT at this point, but that
-     may not be true if this is a recursive call to dlopen.  */
-  _dl_debug_initialize (0, args->nsid);
-
-  /* Load the named object.  */
-  struct link_map *new;
-  args->map = new = _dl_map_object (call_map, file, lt_loaded, 0,
-				    mode | __RTLD_CALLMAP, args->nsid);
-
-  /* If the pointer returned is NULL this means the RTLD_NOLOAD flag is
-     set and the object is not already loaded.  */
-  if (new == NULL)
-    {
-      assert (mode & RTLD_NOLOAD);
-      return;
-    }
-
-  if (__glibc_unlikely (mode & __RTLD_SPROF))
-    /* This happens only if we load a DSO for 'sprof'.  */
-    return;
-
-  /* This object is directly loaded.  */
-  ++new->l_direct_opencount;
-
-  /* It was already open.  */
-  if (__glibc_unlikely (new->l_searchlist.r_list != NULL))
-    {
-      /* Let the user know about the opencount.  */
-      if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_FILES))
-	_dl_debug_printf ("opening file=%s [%lu]; direct_opencount=%u\n\n",
-			  new->l_name, new->l_ns, new->l_direct_opencount);
-
-      /* If the user requested the object to be in the global
-	 namespace but it is not so far, prepare to add it now.  This
-	 can raise an exception to do a malloc failure.  */
-      if ((mode & RTLD_GLOBAL) && new->l_global == 0)
-	add_to_global_resize (new);
-
-      /* Mark the object as not deletable if the RTLD_NODELETE flags
-	 was passed.  */
-      if (__glibc_unlikely (mode & RTLD_NODELETE))
-	{
-	  if (__glibc_unlikely (GLRO (dl_debug_mask) & DL_DEBUG_FILES)
-	      && !new->l_nodelete_active)
-	    _dl_debug_printf ("marking %s [%lu] as NODELETE\n",
-			      new->l_name, new->l_ns);
-	  new->l_nodelete_active = true;
-	}
-
-      /* Finalize the addition to the global scope.  */
-      if ((mode & RTLD_GLOBAL) && new->l_global == 0)
-	add_to_global_update (new);
-
-      const int r_state __attribute__ ((unused))
-        = _dl_debug_update (args->nsid)->r_state;
-      assert (r_state == RT_CONSISTENT);
-
-      return;
-    }
-
-  /* Schedule NODELETE marking for the directly loaded object if
-     requested.  */
-  if (__glibc_unlikely (mode & RTLD_NODELETE))
-    new->l_nodelete_pending = true;
-
-  /* Load that object's dependencies.  */
-  _dl_map_object_deps (new, NULL, 0, 0,
-		       mode & (__RTLD_DLOPEN | RTLD_DEEPBIND | __RTLD_AUDIT));
-
   /* So far, so good.  Now check the versions.  */
   for (unsigned int i = 0; i < new->l_searchlist.r_nlist; ++i)
     if (new->l_searchlist.r_list[i]->l_real->l_versions == NULL)
@@ -611,23 +505,6 @@ dl_open_worker_begin (void *a)
 	  __rtld_static_init (map);
 #endif
       }
-
-#ifdef SHARED
-  /* Auditing checkpoint: we have added all objects.  */
-  _dl_audit_activity_nsid (new->l_ns, LA_ACT_CONSISTENT);
-#endif
-
-  /* Notify the debugger all new objects are now ready to go.  */
-  struct r_debug *r = _dl_debug_update (args->nsid);
-  r->r_state = RT_CONSISTENT;
-  _dl_debug_state ();
-  LIBC_PROBE (map_complete, 3, args->nsid, r, new);
-
-  _dl_open_check (new);
-
-  /* Print scope information.  */
-  if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_SCOPES))
-    _dl_show_scope (new, 0);
 
   /* Only do lazy relocation if `LD_BIND_NOW' is not set.  */
   int reloc_mode = mode & __RTLD_AUDIT;
@@ -753,20 +630,148 @@ dl_open_worker_begin (void *a)
 
   /* Notify the debugger all new objects have been relocated.  */
   if (relocation_in_progress)
-    LIBC_PROBE (reloc_complete, 3, args->nsid, r, new);
+    LIBC_PROBE (reloc_complete, 3, nsid, r, new);
 
   /* If libc.so was not there before, attempt to call its early
      initialization routine.  Indicate to the initialization routine
      whether the libc being initialized is the one in the base
      namespace.  */
-  if (!args->libc_already_loaded)
+  if (call_ctors)
     {
       /* dlopen cannot be used to load an initial libc by design.  */
-      struct link_map *libc_map = GL(dl_ns)[args->nsid].libc_map;
+      struct link_map *libc_map = GL(dl_ns)[nsid].libc_map;
       _dl_call_libc_early_init (libc_map, false);
     }
+}
+
+static void
+dl_open_worker_begin (void *a)
+{
+  struct dl_open_args *args = a;
+  const char *file = args->file;
+  int mode = args->mode;
+  struct link_map *call_map = NULL;
+
+  /* Determine the caller's map if necessary.  This is needed in case
+     we have a DST, when we don't know the namespace ID we have to put
+     the new object in, or when the file name has no path in which
+     case we need to look along the RUNPATH/RPATH of the caller.  */
+  const char *dst = strchr (file, '$');
+  if (dst != NULL || args->nsid == __LM_ID_CALLER
+      || strchr (file, '/') == NULL)
+    {
+      const void *caller_dlopen = args->caller_dlopen;
+
+      /* We have to find out from which object the caller is calling.
+	 By default we assume this is the main application.  */
+      call_map = GL(dl_ns)[LM_ID_BASE]._ns_loaded;
+
+      struct link_map *l = _dl_find_dso_for_object ((ElfW(Addr)) caller_dlopen);
+
+      if (l)
+	call_map = l;
+
+      if (args->nsid == __LM_ID_CALLER)
+	args->nsid = call_map->l_ns;
+    }
+
+  /* The namespace ID is now known.  Keep track of whether libc.so was
+     already loaded, to determine whether it is necessary to call the
+     early initialization routine (or clear libc_map on error).  */
+  args->libc_already_loaded = GL(dl_ns)[args->nsid].libc_map != NULL;
+
+  /* Retain the old value, so that it can be restored.  */
+  args->original_global_scope_pending_adds
+    = GL (dl_ns)[args->nsid]._ns_global_scope_pending_adds;
+
+  /* One might be tempted to assert that we are RT_CONSISTENT at this point, but that
+     may not be true if this is a recursive call to dlopen.  */
+  _dl_debug_initialize (0, args->nsid);
+
+  /* Load the named object.  */
+  struct link_map *new;
+  args->map = new = _dl_map_object (call_map, file, lt_loaded, 0,
+				    mode | __RTLD_CALLMAP, args->nsid);
+
+  /* If the pointer returned is NULL this means the RTLD_NOLOAD flag is
+     set and the object is not already loaded.  */
+  if (new == NULL)
+    {
+      assert (mode & RTLD_NOLOAD);
+      return;
+    }
+
+  if (__glibc_unlikely (mode & __RTLD_SPROF))
+    /* This happens only if we load a DSO for 'sprof'.  */
+    return;
+
+  /* This object is directly loaded.  */
+  ++new->l_direct_opencount;
+
+  /* It was already open.  */
+  if (__glibc_unlikely (new->l_searchlist.r_list != NULL))
+    {
+      /* Let the user know about the opencount.  */
+      if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_FILES))
+	_dl_debug_printf ("opening file=%s [%lu]; direct_opencount=%u\n\n",
+			  new->l_name, new->l_ns, new->l_direct_opencount);
+
+      /* If the user requested the object to be in the global
+	 namespace but it is not so far, prepare to add it now.  This
+	 can raise an exception to do a malloc failure.  */
+      if ((mode & RTLD_GLOBAL) && new->l_global == 0)
+	add_to_global_resize (new);
+
+      /* Mark the object as not deletable if the RTLD_NODELETE flags
+	 was passed.  */
+      if (__glibc_unlikely (mode & RTLD_NODELETE))
+	{
+	  if (__glibc_unlikely (GLRO (dl_debug_mask) & DL_DEBUG_FILES)
+	      && !new->l_nodelete_active)
+	    _dl_debug_printf ("marking %s [%lu] as NODELETE\n",
+			      new->l_name, new->l_ns);
+	  new->l_nodelete_active = true;
+	}
+
+      /* Finalize the addition to the global scope.  */
+      if ((mode & RTLD_GLOBAL) && new->l_global == 0)
+	add_to_global_update (new);
+
+      const int r_state __attribute__ ((unused))
+        = _dl_debug_update (args->nsid)->r_state;
+      assert (r_state == RT_CONSISTENT);
+
+      return;
+    }
+
+  /* Schedule NODELETE marking for the directly loaded object if
+     requested.  */
+  if (__glibc_unlikely (mode & RTLD_NODELETE))
+    new->l_nodelete_pending = true;
+
+  /* Load that object's dependencies.  */
+  _dl_map_object_deps (new, NULL, 0, 0,
+		       mode & (__RTLD_DLOPEN | RTLD_DEEPBIND | __RTLD_AUDIT));
+
+#ifdef SHARED
+  /* Auditing checkpoint: we have added all objects.  */
+  _dl_audit_activity_nsid (new->l_ns, LA_ACT_CONSISTENT);
+#endif
+
+  /* Notify the debugger all new objects are now ready to go.  */
+  struct r_debug *r = _dl_debug_update (args->nsid);
+  r->r_state = RT_CONSISTENT;
+  _dl_debug_state ();
+  LIBC_PROBE (map_complete, 3, args->nsid, r, new);
+
+  _dl_open_check (new);
+
+  /* Print scope information.  */
+  if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_SCOPES))
+    _dl_show_scope (new, 0);
 
   args->worker_continue = true;
+  do_reloc_1 (new, mode, args->nsid, !args->libc_already_loaded);
 }
 
 static void
