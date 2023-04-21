@@ -347,6 +347,8 @@ struct link_map
     size_t l_relro_size;
 
     unsigned long long int l_serial;
+
+    void *l_dlopen_args;
   };
 
 #include <dl-relocate-ld.h>

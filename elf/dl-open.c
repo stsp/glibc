@@ -667,6 +667,31 @@ do_reloc_2 (struct link_map *new, int mode, struct dl_open_args *args)
 }
 
 static void
+dl_reloc_worker_begin (void *a)
+{
+  struct dl_open_args *args = a;
+  do_reloc_1 (args->map, args->mode, args->nsid, !args->libc_already_loaded);
+}
+
+static void
+_dl_object_reloc (struct link_map *l)
+{
+  struct dl_exception ex;
+  int err;
+  struct dl_open_args *args = l->l_dlopen_args;
+  int mode = args->mode;
+
+  /* Protects global and module specific TLS state.  */
+  __rtld_lock_lock_recursive (GL(dl_load_tls_lock));
+  err = _dl_catch_exception (&ex, dl_reloc_worker_begin, args);
+  __rtld_lock_unlock_recursive (GL(dl_load_tls_lock));
+  if (__glibc_unlikely (ex.errstring != NULL))
+    /* Reraise the error.  */
+    _dl_signal_exception (err, &ex, NULL);
+  do_reloc_2 (l, mode, args);
+}
+
+static void
 dl_open_worker_begin (void *a)
 {
   struct dl_open_args *args = a;
@@ -775,6 +800,27 @@ dl_open_worker_begin (void *a)
   _dl_map_object_deps (new, NULL, 0, 0,
 		       mode & (__RTLD_DLOPEN | RTLD_DEEPBIND | __RTLD_AUDIT));
 
+  args->worker_continue = true;
+  if (!new->l_dlopen_args)
+    {
+      if (new->l_type == lt_loaded)
+        {
+          new->l_dlopen_args = (struct dl_open_args *)
+                               malloc (sizeof (struct dl_open_args));
+          if (new->l_dlopen_args == NULL)
+            _dl_signal_error (ENOMEM, new->l_name, NULL,
+			      N_("cannot allocate memory buffer"));
+          memcpy (new->l_dlopen_args, args, sizeof (*args));
+        }
+      else
+        new->l_dlopen_args = args;
+    }
+  else
+    {
+      assert (new->l_type == lt_loaded);
+      memcpy (new->l_dlopen_args, args, sizeof (*args));
+    }
+
 #ifdef SHARED
   /* Auditing checkpoint: we have added all objects.  */
   _dl_audit_activity_nsid (new->l_ns, LA_ACT_CONSISTENT);
@@ -791,9 +837,6 @@ dl_open_worker_begin (void *a)
   /* Print scope information.  */
   if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_SCOPES))
     _dl_show_scope (new, 0);
-
-  args->worker_continue = true;
-  do_reloc_1 (new, mode, args->nsid, !args->libc_already_loaded);
 }
 
 static void
@@ -820,10 +863,12 @@ dl_open_worker (void *a)
   if (!args->worker_continue)
     return;
 
-  int mode = args->mode;
   struct link_map *new = args->map;
 
-  do_reloc_2 (new, mode, args);
+  _dl_object_reloc (new);
+  /* For !lt_loaded we do not malloc(), so needs to null out here. */
+  if (new->l_type != lt_loaded)
+    new->l_dlopen_args = NULL;
 
   /* Let the user know about the opencount.  */
   if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_FILES))

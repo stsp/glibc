@@ -690,6 +690,8 @@ _dl_close_worker (struct link_map *map, bool force)
 	  if (imap == GL(dl_initfirst))
 	    GL(dl_initfirst) = NULL;
 
+	  free (imap->l_dlopen_args);
+
 	  free (imap);
 	}
     }
