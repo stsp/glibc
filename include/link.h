@@ -179,6 +179,7 @@ struct link_map
       } l_type:2;
     unsigned int l_dt_relr_ref:1; /* Nonzero if GLIBC_ABI_DT_RELR is
 				     referenced.  */
+    unsigned int l_map_completed:1; /* Nonzero if object fully mapped.  */
     unsigned int l_relocated:1;	/* Nonzero if object's relocations done.  */
     unsigned int l_init_called:1; /* Nonzero if DT_INIT function called.  */
     unsigned int l_global:1;	/* Nonzero if object in _dl_global_scope.  */
@@ -252,7 +253,7 @@ struct link_map
 
     /* Start and finish of memory map for this object.  l_map_start
        need not be the same as l_addr.  */
-    ElfW(Addr) l_map_start, l_map_end;
+    ElfW(Addr) l_map_start, l_map_end, l_map_align;
     /* End of the executable part of the mapping.  */
     ElfW(Addr) l_text_end;
 
@@ -349,6 +350,8 @@ struct link_map
     unsigned long long int l_serial;
 
     void *l_dlopen_args;
+    void *l_loadcmds;
+    size_t l_nloadcmds;
   };
 
 #include <dl-relocate-ld.h>

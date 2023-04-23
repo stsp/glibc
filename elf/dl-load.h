@@ -75,7 +75,7 @@ ELF_PREFERRED_ADDRESS_DATA;
    Its details have been expanded out and converted.  */
 struct loadcmd
 {
-  ElfW(Addr) mapstart, mapend, dataend, allocend, mapalign, maphole;
+  ElfW(Addr) mapstart, mapend, dataend, allocend, maphole;
   ElfW(Off) mapoff;
   int prot;                             /* PROT_* bits.  */
 };

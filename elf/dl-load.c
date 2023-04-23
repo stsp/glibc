@@ -950,6 +950,7 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
   int type;
   /* Initialize to keep the compiler happy.  */
   const char *errstring = NULL;
+  struct loadcmd *loadcmds = NULL;
   int errval = 0;
 
   /* Get file information.  To match the kernel behavior, do not fill
@@ -969,6 +970,8 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
 	lose_errno:
 	  errval = errno;
 	lose:
+	  if (loadcmds)
+	    free (loadcmds);
 	  /* The file might already be closed.  */
 	  if (fd != -1)
 	    __close_nocancel (fd);
@@ -1080,17 +1083,22 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
 	}
     }
 
-   /* On most platforms presume that PT_GNU_STACK is absent and the stack is
-    * executable.  Other platforms default to a nonexecutable stack and don't
-    * need PT_GNU_STACK to do so.  */
-   unsigned int stack_flags = DEFAULT_STACK_PERMS;
+  /* On most platforms presume that PT_GNU_STACK is absent and the stack is
+   * executable.  Other platforms default to a nonexecutable stack and don't
+   * need PT_GNU_STACK to do so.  */
+  unsigned int stack_flags = DEFAULT_STACK_PERMS;
 
   {
     /* Scan the program header table, collecting its load commands.  */
-    struct loadcmd loadcmds[l->l_phnum];
-    size_t nloadcmds = 0;
+    #define nloadcmds l->l_nloadcmds
     bool empty_dynamic = false;
     ElfW(Addr) p_align_max = 0;
+
+    loadcmds = (struct loadcmd *) malloc (sizeof (struct loadcmd) * l->l_phnum);
+    if (loadcmds == NULL)
+      goto lose;
+    l->l_loadcmds = loadcmds;
+    nloadcmds = 0;
 
     /* The struct is initialized to zero so this is not necessary:
     l->l_ld = 0;
@@ -1225,8 +1233,7 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
       }
 
     /* Align all PT_LOAD segments to the maximum p_align.  */
-    for (size_t i = 0; i < nloadcmds; i++)
-      loadcmds[i].mapalign = p_align_max;
+    l->l_map_align = p_align_max;
 
     /* dlopen of an executable is not valid because it is not possible
        to perform proper relocations, handle static TLS, or run the
@@ -1263,9 +1270,13 @@ _dl_map_object_from_fd (const char *name, const char *origname, int fd,
 	l->l_map_start = l->l_map_end = 0;
 	goto lose;
       }
-    errstring = _dl_finalize_segments (l, type, loadcmds, nloadcmds);
-    if (__glibc_unlikely (errstring != NULL))
-      goto lose;
+    /* dlopen()ed solibs are finalized on a relocation step. */
+    if (!(mode & __RTLD_DLOPEN))
+      {
+        errstring = _dl_finalize_segments (l, type, loadcmds, nloadcmds);
+        if (__glibc_unlikely (errstring != NULL))
+	  goto lose;
+      }
   }
 
   if (l->l_ld != 0)

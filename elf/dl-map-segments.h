@@ -100,7 +100,7 @@ _dl_map_segments (struct link_map *l, int fd,
            - MAP_BASE_ADDR (l));
 
       /* Remember which part of the address space this object uses.  */
-      l->l_map_start = _dl_map_segment (mappref, maplength, c->mapalign);
+      l->l_map_start = _dl_map_segment (mappref, maplength, l->l_map_align);
       if (__glibc_unlikely ((void *) l->l_map_start == MAP_FAILED))
         return DL_MAP_SEGMENTS_ERROR_MAP_SEGMENT;
 
@@ -149,6 +149,9 @@ _dl_finalize_segments (struct link_map *l, int type,
                        const struct loadcmd loadcmds[], size_t nloadcmds)
 {
   const struct loadcmd *c = loadcmds;
+
+  if (l->l_map_completed)
+    return NULL;
 
   while (c < &loadcmds[nloadcmds])
     {
@@ -233,6 +236,8 @@ _dl_finalize_segments (struct link_map *l, int type,
 
       ++c;
     }
+
+  l->l_map_completed = 1;
 
   return NULL;
 }

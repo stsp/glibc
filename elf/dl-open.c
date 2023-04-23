@@ -40,7 +40,8 @@
 
 #include <dl-dst.h>
 #include <dl-prop.h>
-
+#include "dl-load.h"
+#include "dl-map-segments.h"
 
 /* We must be careful not to leave us in an inconsistent state.  Thus we
    catch any error and re-raise it after cleaning up.  */
@@ -543,6 +544,8 @@ do_reloc_1 (struct link_map *new, int mode, Lmid_t nsid, bool call_ctors)
 
   for (unsigned int i = last; i-- > first; )
     {
+      const char *errstring;
+
       l = new->l_initfini[i];
 
       if (l->l_real->l_relocated)
@@ -554,6 +557,11 @@ do_reloc_1 (struct link_map *new, int mode, Lmid_t nsid, bool call_ctors)
 	  LIBC_PROBE (reloc_start, 2, args->nsid, r);
 	  relocation_in_progress = 1;
 	}
+
+      errstring = _dl_finalize_segments (l, ET_DYN, l->l_loadcmds,
+                                         l->l_nloadcmds);
+      if (__glibc_unlikely (errstring != NULL))
+        _dl_signal_error (EINVAL, l->l_libname->name, NULL, errstring);
 
 #ifdef SHARED
       if (__glibc_unlikely (GLRO(dl_profile) != NULL))

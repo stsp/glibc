@@ -691,6 +691,7 @@ _dl_close_worker (struct link_map *map, bool force)
 	    GL(dl_initfirst) = NULL;
 
 	  free (imap->l_dlopen_args);
+	  free (imap->l_loadcmds);
 
 	  free (imap);
 	}
