@@ -127,4 +127,6 @@ _Noreturn void _dl_help (const char *argv0, struct dl_main_state *state)
 /* Print a diagnostics dump.  */
 _Noreturn void _dl_print_diagnostics (char **environ) attribute_hidden;
 
+extern void _dl_object_reloc (struct link_map *l) attribute_hidden;
+
 #endif /* _DL_MAIN */

@@ -31,7 +31,7 @@
 #include <tls.h>
 #include <atomic.h>
 #include <elf_machine_sym_no_match.h>
-
+#include <dl-main.h>
 #include <assert.h>
 
 #define VERSTAG(tag)	(DT_NUM + DT_THISPROCNUM + DT_VERSIONTAGIDX (tag))
@@ -758,6 +758,10 @@ _dl_lookup_symbol_x (const char *undef_name, struct link_map *undef_map,
   unsigned long int old_hash = 0xffffffff;
   struct sym_val current_value = { NULL, NULL };
   struct r_scope_elem **scope = symbol_scope;
+
+  if (undef_map && !undef_map->l_relocated && undef_map->l_reloc_deferred
+      && undef_map->l_type == lt_loaded)
+    _dl_object_reloc (undef_map);
 
   bump_num_relocations ();
 

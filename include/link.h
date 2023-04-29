@@ -180,6 +180,7 @@ struct link_map
     unsigned int l_dt_relr_ref:1; /* Nonzero if GLIBC_ABI_DT_RELR is
 				     referenced.  */
     unsigned int l_map_completed:1; /* Nonzero if object fully mapped.  */
+    unsigned int l_reloc_deferred:1; /* Nonzero if relocation deferred.  */
     unsigned int l_relocated:1;	/* Nonzero if object's relocations done.  */
     unsigned int l_init_called:1; /* Nonzero if DT_INIT function called.  */
     unsigned int l_global:1;	/* Nonzero if object in _dl_global_scope.  */

@@ -41,6 +41,9 @@
 #define RTLD_NODELETE	0x01000
 
 #ifdef __USE_GNU
+/* Do not relocte object on dlopen().  */
+#define RTLD_NORELOCATE	0x02000
+
 /* To support profiling of shared objects it is a good idea to call
    the function found using `dlsym' using the following macro since
    these calls do not use the PLT.  But this would mean the dynamic

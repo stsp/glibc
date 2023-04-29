@@ -223,6 +223,8 @@ _dl_find_dso_for_object (const ElfW(Addr) addr)
 	      || _dl_addr_inside_object (l, (ElfW(Addr)) addr)))
 	{
 	  assert (ns == l->l_ns);
+	  if (!l->l_relocated)
+	    return NULL;
 	  return l;
 	}
   return NULL;
@@ -681,13 +683,15 @@ dl_reloc_worker_begin (void *a)
   do_reloc_1 (args->map, args->mode, args->nsid, !args->libc_already_loaded);
 }
 
-static void
+void
 _dl_object_reloc (struct link_map *l)
 {
   struct dl_exception ex;
   int err;
   struct dl_open_args *args = l->l_dlopen_args;
   int mode = args->mode;
+
+  l->l_reloc_deferred = 0;
 
   /* Protects global and module specific TLS state.  */
   __rtld_lock_lock_recursive (GL(dl_load_tls_lock));
@@ -760,6 +764,10 @@ dl_open_worker_begin (void *a)
     /* This happens only if we load a DSO for 'sprof'.  */
     return;
 
+  if (__glibc_unlikely ((mode & RTLD_NORELOCATE) && new->l_relocated))
+    _dl_signal_error (EINVAL, new->l_name, NULL,
+		      N_("RTLD_NORELOCATE used with already relocated object"));
+
   /* This object is directly loaded.  */
   ++new->l_direct_opencount;
 
@@ -821,7 +829,12 @@ dl_open_worker_begin (void *a)
           memcpy (new->l_dlopen_args, args, sizeof (*args));
         }
       else
-        new->l_dlopen_args = args;
+        {
+          assert (new->l_relocated);
+          /* If relocated, this flag is filtered above. */
+          assert (!(mode & RTLD_NORELOCATE));
+          new->l_dlopen_args = args;
+        }
     }
   else
     {
@@ -873,7 +886,10 @@ dl_open_worker (void *a)
 
   struct link_map *new = args->map;
 
-  _dl_object_reloc (new);
+  if (__glibc_likely (!(args->mode & RTLD_NORELOCATE)))
+    _dl_object_reloc (new);
+  else
+    new->l_reloc_deferred = 1;
   /* For !lt_loaded we do not malloc(), so needs to null out here. */
   if (new->l_type != lt_loaded)
     new->l_dlopen_args = NULL;
