@@ -51,12 +51,12 @@ endif
 ifeq (yes,$(build-shared))
 tests = glrefmain failtest tst-dladdr default errmsg1 tstcxaatexit \
 	bug-dlopen1 bug-dlsym1 tst-dlinfo bug-atexit1 bug-atexit2 \
-	bug-atexit3 tstatexit bug-dl-leaf tst-rec-dlopen
+	bug-atexit3 tstatexit bug-dl-leaf tst-rec-dlopen tst-noreloc
 endif
 modules-names = glreflib1 glreflib2 glreflib3 failtestmod defaultmod1 \
 		defaultmod2 errmsg1mod modatexit modcxaatexit \
 		bug-dlsym1-lib1 bug-dlsym1-lib2 bug-atexit1-lib \
-		bug-atexit2-lib bug-dl-leaf-lib \
+		bug-atexit2-lib bug-dl-leaf-lib ctorlib1 \
 		bug-dl-leaf-lib-cb moddummy1 moddummy2
 
 failtestmod.so-no-z-defs = yes
@@ -102,6 +102,8 @@ $(objpfx)glrefmain.out: $(objpfx)glrefmain \
 $(objpfx)failtest.out: $(objpfx)failtestmod.so
 
 $(objpfx)tst-dladdr.out: $(objpfx)glreflib1.so
+$(objpfx)tst-noreloc.out: $(objpfx)ctorlib1.so
+LDFLAGS-tst-noreloc = $(LDFLAGS-rdynamic)
 
 $(objpfx)tst-dlinfo.out: $(objpfx)glreflib3.so
 LDFLAGS-glreflib3.so = -Wl,-rpath,:
