@@ -85,6 +85,24 @@ dlinfo_doit (void *argsblock)
       *(const ElfW(Phdr) **) args->arg = l->l_phdr;
       args->result = l->l_phnum;
       break;
+
+    case RTLD_DI_MAPINFO:
+      {
+	Dl_mapinfo *info = (Dl_mapinfo *) args->arg;
+	__rtld_lock_lock_recursive (GL(dl_load_lock));
+	if (l->l_contiguous)
+	  {
+	    info->map_start = (void *) l->l_map_start;
+	    info->map_length = l->l_map_end - l->l_map_start;
+	    info->map_align = l->l_map_align;
+	    info->relocated = l->l_relocated;
+	    args->result = 0;
+	  }
+	else
+	  args->result = -1;
+	__rtld_lock_unlock_recursive (GL(dl_load_lock));
+	break;
+      }
     }
 }
 

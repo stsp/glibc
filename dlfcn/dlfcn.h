@@ -170,7 +170,12 @@ enum
        the number of program headers in the array.  */
     RTLD_DI_PHDR = 11,
 
-    RTLD_DI_MAX = 11
+    /* Treat ARG as Dl_mapinfo *, and store the mapping information
+       at that location.  The dlinfo call returns 0 on success or
+       -1 on failure.  */
+    RTLD_DI_MAPINFO = 12,
+
+    RTLD_DI_MAX = 12
   };
 
 
@@ -202,6 +207,14 @@ typedef struct
   Dl_serpath dls_serpath[1];	/* Actually longer, dls_cnt elements.  */
 # endif
 } Dl_serinfo;
+
+typedef struct
+{
+  void *map_start;		/* Beginning of mapping containing address.  */
+  size_t map_length;		/* Length of mapping.  */
+  size_t map_align;		/* Alignment of mapping.  */
+  int relocated;		/* Indicates whether an object was relocated. */
+} Dl_mapinfo;
 
 struct dl_find_object
 {
