@@ -1043,3 +1043,17 @@ _dl_show_scope (struct link_map *l, int from)
     _dl_debug_printf (" no scope\n");
   _dl_debug_printf ("\n");
 }
+
+void
+_dl_relocate (void *handle)
+{
+  struct link_map *map = handle;
+
+  if (map->l_type != lt_loaded)
+    _dl_signal_error (EINVAL, map->l_name, NULL,
+		      N_("invalid object for dlrelocate()"));
+  if (map->l_relocated || !map->l_reloc_deferred)
+    _dl_signal_error (EINVAL, map->l_name, NULL,
+		      N_("object already relocated"));
+  _dl_object_reloc (handle);
+}

@@ -44,6 +44,26 @@ do_test (void)
     error (EXIT_FAILURE, 0, "dlsym failed");
   TEST_COMPARE (ctor_called, 1);
 
+  dlclose (handle);
+  ctor_called = 0;
+  handle = dlopen ("ctorlib1.so", RTLD_NOW | RTLD_NORELOCATE);
+  if (handle == NULL)
+    error (EXIT_FAILURE, 0, "cannot load: ctorlib1.so");
+
+  TEST_COMPARE (ctor_called, 0);
+  ret = dlrelocate (handle);
+  TEST_COMPARE (ret, 0);
+  /* dlrelocate() called ctors. */
+  TEST_COMPARE (ctor_called, 1);
+  /* This time should fail. */
+  ret = dlrelocate (handle);
+  TEST_COMPARE (ret, -1);
+  TEST_COMPARE (ctor_called, 1);
+  sym = dlsym (handle, "ref1");
+  if (sym == NULL)
+    error (EXIT_FAILURE, 0, "dlsym failed");
+  TEST_COMPARE (ctor_called, 1);
+
   memset (&info, 0, sizeof (info));
   ret = dladdr (sym, &info);
   if (ret == 0)

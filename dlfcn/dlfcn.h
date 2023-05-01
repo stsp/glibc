@@ -68,6 +68,9 @@ extern void *dlsym (void *__restrict __handle,
 /* Like `dlopen', but request object to be allocated in a new namespace.  */
 extern void *dlmopen (Lmid_t __nsid, const char *__file, int __mode) __THROWNL;
 
+/* Relocate a shared object opened by `dlopen' with `RTLD_NORELOCATE'.  */
+extern int dlrelocate (void *__handle) __THROWNL __nonnull ((1));
+
 /* Find the run-time address in the shared object HANDLE refers to
    of the symbol called NAME with VERSION.  */
 extern void *dlvsym (void *__restrict __handle,
