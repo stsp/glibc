@@ -27,6 +27,7 @@ routines = \
   dladdr1 \
   dlclose \
   dlrelocate \
+  dlset_object_base \
   dlerror \
   dlinfo \
   dlmopen \

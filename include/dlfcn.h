@@ -59,6 +59,8 @@ extern int   __libc_dlclose (void *__map)
   attribute_hidden;
 extern int   __libc_dlrelocate (void *__map)
   attribute_hidden;
+extern int   __libc_dlset_object_base (void *__map, void *base)
+  attribute_hidden;
 
 /* Locate shared object containing the given address.  */
 #ifdef ElfW
@@ -107,6 +109,7 @@ struct dlfcn_hook
   void *(*dlopen) (const char *file, int mode, void *dl_caller);
   int (*dlclose) (void *handle);
   int (*dlrelocate) (void *handle);
+  int (*dlset_object_base) (void *handle, void *base);
   void *(*dlsym) (void *handle, const char *name, void *dl_caller);
   void *(*dlvsym) (void *handle, const char *name, const char *version,
 		   void *dl_caller);
@@ -133,6 +136,7 @@ extern void *__dlmopen (Lmid_t nsid, const char *file, int mode,
 			void *dl_caller);
 extern int __dlclose (void *handle);
 extern int __dlrelocate (void *handle);
+extern int __dlset_object_base (void *handle, void *base);
 extern void *__dlsym (void *handle, const char *name, void *dl_caller);
 extern void *__dlvsym (void *handle, const char *name, const char *version,
 		       void *dl_caller);

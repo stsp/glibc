@@ -30,6 +30,7 @@ libc {
   }
   GLIBC_2.38 {
     dlrelocate;
+    dlset_object_base;
   }
   GLIBC_PRIVATE {
     __libc_dlerror_result;

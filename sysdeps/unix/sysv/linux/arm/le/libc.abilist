@@ -544,6 +544,7 @@ GLIBC_2.38 __isoc23_wcstoull_l F
 GLIBC_2.38 __isoc23_wcstoumax F
 GLIBC_2.38 __isoc23_wscanf F
 GLIBC_2.38 dlrelocate F
+GLIBC_2.38 dlset_object_base F
 GLIBC_2.4 _Exit F
 GLIBC_2.4 _IO_2_1_stderr_ D 0xa0
 GLIBC_2.4 _IO_2_1_stdin_ D 0xa0
