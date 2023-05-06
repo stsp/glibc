@@ -21,10 +21,12 @@
 #include <stdio.h>
 
 extern int ref1 (void);
+
+extern int cref1 (void);
 int
-ref1 (void)
+cref1 (void)
 {
-  return 42;
+  return 34;
 }
 
 void __attribute__((constructor))
@@ -32,5 +34,6 @@ ctor (void)
 {
   int *ct = (int *) dlsym (RTLD_DEFAULT, "ctor_called");
   assert (ct);
-  (*ct)++;
+  if (ref1 () == 42)
+    (*ct)++;
 }

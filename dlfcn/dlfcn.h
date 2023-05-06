@@ -179,7 +179,12 @@ enum
        -1 on failure.  */
     RTLD_DI_MAPINFO = 12,
 
-    RTLD_DI_MAX = 12
+    /* Treat ARG as Dl_deplist *, and store the dependency link-maps
+       at that location.  The dlinfo call returns 0 on success or
+       -1 on failure.  */
+    RTLD_DI_DEPLIST = 13,
+
+    RTLD_DI_MAX = 13
   };
 
 
@@ -219,6 +224,12 @@ typedef struct
   size_t map_align;		/* Alignment of mapping.  */
   int relocated;		/* Indicates whether an object was relocated. */
 } Dl_mapinfo;
+
+typedef struct
+{
+  void **deps;			/* Array of handles for the deps.  */
+  unsigned int ndeps;		/* Number of entries in the list.  */
+} Dl_deplist;
 
 struct dl_find_object
 {

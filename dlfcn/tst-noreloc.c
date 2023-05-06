@@ -29,14 +29,17 @@
 
 int ctor_called;
 
-static void move_object (void *handle)
+static void move_object (void *handle, int is_dep)
 {
   int ret;
   Dl_mapinfo mapinfo;
   void *new_addr;
 
   ret = dlinfo (handle, RTLD_DI_MAPINFO, &mapinfo);
-  TEST_COMPARE (ret, 0);
+  if (!is_dep)
+    TEST_COMPARE (ret, 0);
+  if (is_dep && (ret == -1 || mapinfo.relocated))
+    return;
   TEST_COMPARE (mapinfo.relocated, 0);
   if (mapinfo.map_align != getpagesize ())
     error (EXIT_FAILURE, 0, "unsupported map alignment");
@@ -59,7 +62,10 @@ do_test (void)
   void *handle;
   int (*sym) (void);
   Dl_info info;
+  Dl_info info2;
+  Dl_deplist deplist;
   int ret;
+  int i;
 
   handle = dlopen ("ctorlib1.so", RTLD_NOW | RTLD_NORELOCATE);
   if (handle == NULL)
@@ -97,7 +103,11 @@ do_test (void)
   if (handle == NULL)
     error (EXIT_FAILURE, 0, "cannot load: ctorlib1.so");
 
-  move_object (handle);
+  move_object (handle, 0);
+  ret = dlinfo (handle, RTLD_DI_DEPLIST, &deplist);
+  TEST_COMPARE (ret, 0);
+  for (i = 0; i < deplist.ndeps; i++)
+    move_object (deplist.deps[i], 1);
 
   TEST_COMPARE (ctor_called, 0);
   sym = dlsym (handle, "ref1");
@@ -112,6 +122,20 @@ do_test (void)
 #if MAP_32BIT != 0
   TEST_VERIFY ((uintptr_t) info.dli_fbase < 0x100000000);
 #endif
+
+  sym = dlsym (handle, "cref1");
+  if (sym == NULL)
+    error (EXIT_FAILURE, 0, "dlsym failed");
+  TEST_COMPARE (ctor_called, 1);
+
+  memset (&info2, 0, sizeof (info2));
+  ret = dladdr (sym, &info2);
+  if (ret == 0)
+    error (EXIT_FAILURE, 0, "dladdr failed");
+#if MAP_32BIT != 0
+  TEST_VERIFY ((uintptr_t) info2.dli_fbase < 0x100000000);
+#endif
+  TEST_VERIFY (info2.dli_fbase != info.dli_fbase);
 
   printf ("ret = %d\n", ret);
   printf ("info.dli_fname = %p (\"%s\")\n", info.dli_fname, info.dli_fname);

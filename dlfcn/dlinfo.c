@@ -18,6 +18,7 @@
 
 #include <dlfcn.h>
 #include <link.h>
+#include <assert.h>
 #include <ldsodefs.h>
 #include <libintl.h>
 #include <dl-tls.h>
@@ -101,6 +102,19 @@ dlinfo_doit (void *argsblock)
 	else
 	  args->result = -1;
 	__rtld_lock_unlock_recursive (GL(dl_load_lock));
+	break;
+      }
+
+    case RTLD_DI_DEPLIST:
+      {
+	int i = 0;
+	Dl_deplist *list = (Dl_deplist *) args->arg;
+	assert (l == l->l_initfini[0]);
+	list->deps = (void **) &l->l_initfini[1];  /* Skip our own handle. */
+	while (list->deps[i])
+	  i++;
+	list->ndeps = i;
+	args->result = 0;
 	break;
       }
     }

@@ -104,6 +104,9 @@ $(objpfx)glrefmain.out: $(objpfx)glrefmain \
 $(objpfx)failtest.out: $(objpfx)failtestmod.so
 
 $(objpfx)tst-dladdr.out: $(objpfx)glreflib1.so
+
+$(objpfx)ctorlib1.so: $(objpfx)glreflib1.so
+LDFLAGS-ctorlib1 = $(objpfx)glreflib1.so
 $(objpfx)tst-noreloc.out: $(objpfx)ctorlib1.so
 LDFLAGS-tst-noreloc = $(LDFLAGS-rdynamic)
 
